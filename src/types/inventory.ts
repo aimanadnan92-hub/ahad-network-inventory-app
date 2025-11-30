@@ -19,7 +19,7 @@ export interface ProductUpdate {
 export interface ActivityLog {
   id: string;
   timestamp: string;
-  type: 'invoice' | 'manual' | 'temporary-out' | 'return';
+  type: 'invoice' | 'manual' | 'temporary-out' | 'return' | 'damaged' | 'missing' | 'expired' | 'sample-demo';
   orderNumber?: string;
   productUpdates: ProductUpdate[];
   userId: string;
