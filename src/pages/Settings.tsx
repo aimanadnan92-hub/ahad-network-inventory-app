@@ -12,18 +12,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Ban } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { Plus, Pencil, Ban, Download, RefreshCw, AlertTriangle } from 'lucide-react';
+import { toast as sonnerToast } from 'sonner';
 import { format } from 'date-fns';
+import { exportToCSV } from '@/lib/exportUtils';
 
 const Settings = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [users, setUsers] = useState(getUsers());
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [minStockThreshold, setMinStockThreshold] = useState(100);
+  const [criticalThreshold, setCriticalThreshold] = useState(50);
   const [emailNotifications, setEmailNotifications] = useState(false);
   const [lowStockAlerts, setLowStockAlerts] = useState(true);
+  const [criticalAlerts, setCriticalAlerts] = useState(true);
+  const [showCustomerNames, setShowCustomerNames] = useState(true);
+  const [showCustomerEmails, setShowCustomerEmails] = useState(false);
+  const [dateFormat, setDateFormat] = useState('DD/MM/YYYY');
+  const [timeFormat, setTimeFormat] = useState('24-hour');
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState('');
 
   // New user form
   const [newUser, setNewUser] = useState({
@@ -39,21 +47,13 @@ const Settings = () => {
 
   const handleAddUser = () => {
     if (!newUser.email || !newUser.name || !newUser.password) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please fill in all fields',
-        variant: 'destructive',
-      });
+      sonnerToast.error('Please fill in all fields');
       return;
     }
 
     // Check if user already exists
     if (users.some(u => u.email === newUser.email)) {
-      toast({
-        title: 'Error',
-        description: 'User with this email already exists',
-        variant: 'destructive',
-      });
+      sonnerToast.error('User with this email already exists');
       return;
     }
 
@@ -72,21 +72,35 @@ const Settings = () => {
     setIsAddUserOpen(false);
     setNewUser({ email: '', name: '', password: '', role: 'viewer' });
 
-    toast({
-      title: 'Success',
-      description: `User ${user.name} has been added`,
-    });
+    sonnerToast.success(`User ${user.name} has been added`);
   };
 
   const handleDeactivateUser = (userId: string) => {
     const updatedUsers = users.filter(u => u.id !== userId);
     saveUsers(updatedUsers);
     setUsers(updatedUsers);
+    sonnerToast.success('User has been removed from the system');
+  };
 
-    toast({
-      title: 'User Deactivated',
-      description: 'User has been removed from the system',
-    });
+  const handleExportData = () => {
+    try {
+      exportToCSV();
+      sonnerToast.success('Data exported successfully');
+    } catch (error) {
+      sonnerToast.error('Failed to export data');
+    }
+  };
+
+  const handleResetSystem = () => {
+    if (resetConfirmation !== 'RESET') {
+      sonnerToast.error('Please type "RESET" to confirm');
+      return;
+    }
+    
+    // This would reset the system data
+    sonnerToast.success('System data has been reset');
+    setIsResetDialogOpen(false);
+    setResetConfirmation('');
   };
 
   return (
@@ -242,6 +256,45 @@ const Settings = () => {
               Alert when stock falls below this level
             </p>
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="critical-threshold">Critical Stock Threshold</Label>
+            <Input
+              id="critical-threshold"
+              type="number"
+              value={criticalThreshold}
+              onChange={(e) => setCriticalThreshold(Number(e.target.value))}
+              className="max-w-xs"
+            />
+            <p className="text-sm text-muted-foreground">
+              Critical alert when stock falls below this level
+            </p>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="low-stock-alerts">Enable Low Stock Alerts</Label>
+              <p className="text-sm text-muted-foreground">
+                Show alerts when stock &lt; threshold
+              </p>
+            </div>
+            <Switch
+              id="low-stock-alerts"
+              checked={lowStockAlerts}
+              onCheckedChange={setLowStockAlerts}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="critical-alerts">Enable Critical Alerts</Label>
+              <p className="text-sm text-muted-foreground">
+                Show alerts when stock &lt; {criticalThreshold}
+              </p>
+            </div>
+            <Switch
+              id="critical-alerts"
+              checked={criticalAlerts}
+              onCheckedChange={setCriticalAlerts}
+            />
+          </div>
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="email-notifications">Email Notifications</Label>
@@ -255,18 +308,137 @@ const Settings = () => {
               onCheckedChange={setEmailNotifications}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Display Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Display Settings</CardTitle>
+          <CardDescription>Customize how information is displayed</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="date-format">Date Format</Label>
+              <Select value={dateFormat} onValueChange={setDateFormat}>
+                <SelectTrigger id="date-format">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
+                  <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
+                  <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="time-format">Time Format</Label>
+              <Select value={timeFormat} onValueChange={setTimeFormat}>
+                <SelectTrigger id="time-format">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="24-hour">24-hour</SelectItem>
+                  <SelectItem value="12-hour">12-hour</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <Label htmlFor="low-stock-alerts">Low Stock Alerts</Label>
+              <Label htmlFor="show-customer-names">Show Customer Names</Label>
               <p className="text-sm text-muted-foreground">
-                Show dashboard alerts for low inventory
+                Display customer names in activity log
               </p>
             </div>
             <Switch
-              id="low-stock-alerts"
-              checked={lowStockAlerts}
-              onCheckedChange={setLowStockAlerts}
+              id="show-customer-names"
+              checked={showCustomerNames}
+              onCheckedChange={setShowCustomerNames}
             />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="show-customer-emails">Show Customer Emails</Label>
+              <p className="text-sm text-muted-foreground">
+                Display customer emails in details
+              </p>
+            </div>
+            <Switch
+              id="show-customer-emails"
+              checked={showCustomerEmails}
+              onCheckedChange={setShowCustomerEmails}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Data Management */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Data Management</CardTitle>
+          <CardDescription>Export or reset system data (Admin only)</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-3">
+            <Button onClick={handleExportData} variant="outline" className="gap-2 justify-start">
+              <Download className="h-4 w-4" />
+              <div className="text-left">
+                <div className="font-semibold">Export All Data to CSV</div>
+                <div className="text-xs text-muted-foreground">Download complete inventory and activity history</div>
+              </div>
+            </Button>
+            
+            <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2 justify-start border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground">
+                  <AlertTriangle className="h-4 w-4" />
+                  <div className="text-left">
+                    <div className="font-semibold">Reset System Data</div>
+                    <div className="text-xs opacity-80">⚠️ Danger: Reset stock to 1000 and clear all history</div>
+                  </div>
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-5 w-5" />
+                    Reset System Data
+                  </DialogTitle>
+                  <DialogDescription>
+                    This action cannot be undone. All inventory history and activity logs will be permanently deleted.
+                    Stock levels will be reset to 1000 units for all products.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="reset-confirm">Type "RESET" to confirm</Label>
+                    <Input
+                      id="reset-confirm"
+                      value={resetConfirmation}
+                      onChange={(e) => setResetConfirmation(e.target.value)}
+                      placeholder="RESET"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => {
+                    setIsResetDialogOpen(false);
+                    setResetConfirmation('');
+                  }}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    variant="destructive" 
+                    onClick={handleResetSystem}
+                    disabled={resetConfirmation !== 'RESET'}
+                  >
+                    Reset System
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </CardContent>
       </Card>

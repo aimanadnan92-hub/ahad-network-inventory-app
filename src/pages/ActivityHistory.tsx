@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Download, Search } from 'lucide-react';
+import { Download, Search, FileText, Package, TrendingDown, RotateCcw, AlertTriangle, HelpCircle, Clock, Gift } from 'lucide-react';
 import { format } from 'date-fns';
 
 const ActivityHistory = () => {
@@ -71,6 +71,30 @@ const ActivityHistory = () => {
     return products[productId]?.name || productId;
   };
 
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case 'invoice': return <FileText className="h-3 w-3" />;
+      case 'manual': return <Package className="h-3 w-3" />;
+      case 'temporary-out': return <TrendingDown className="h-3 w-3" />;
+      case 'return': return <RotateCcw className="h-3 w-3" />;
+      case 'damaged': return <AlertTriangle className="h-3 w-3" />;
+      case 'missing': return <HelpCircle className="h-3 w-3" />;
+      case 'expired': return <Clock className="h-3 w-3" />;
+      case 'sample-demo': return <Gift className="h-3 w-3" />;
+      default: return <Package className="h-3 w-3" />;
+    }
+  };
+
+  const getTypeBadgeVariant = (type: string): "default" | "secondary" | "destructive" | "outline" => {
+    switch (type) {
+      case 'invoice': return 'default';
+      case 'damaged':
+      case 'missing':
+      case 'expired': return 'destructive';
+      default: return 'secondary';
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -103,6 +127,10 @@ const ActivityHistory = () => {
                 <SelectItem value="manual">Manual Adjustment</SelectItem>
                 <SelectItem value="temporary-out">Temporary Out</SelectItem>
                 <SelectItem value="return">Return to Stock</SelectItem>
+                <SelectItem value="damaged">Damaged</SelectItem>
+                <SelectItem value="missing">Missing</SelectItem>
+                <SelectItem value="expired">Expired</SelectItem>
+                <SelectItem value="sample-demo">Sample/Demo</SelectItem>
               </SelectContent>
             </Select>
             <Select value={productFilter} onValueChange={setProductFilter}>
@@ -159,7 +187,10 @@ const ActivityHistory = () => {
                         {activity.id.slice(0, 12)}...
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{activity.type}</Badge>
+                        <Badge variant={getTypeBadgeVariant(activity.type)} className="gap-1">
+                          {getTypeIcon(activity.type)}
+                          {activity.type}
+                        </Badge>
                       </TableCell>
                       <TableCell className="font-mono-data">
                         {activity.orderNumber || '-'}

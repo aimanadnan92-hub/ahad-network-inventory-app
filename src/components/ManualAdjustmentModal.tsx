@@ -19,10 +19,12 @@ interface ManualAdjustmentModalProps {
 const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustmentModalProps) => {
   const { user } = useAuth();
   const [productId, setProductId] = useState('');
-  const [adjustmentType, setAdjustmentType] = useState<'add' | 'remove' | 'temporary-out' | 'return'>('add');
+  const [adjustmentType, setAdjustmentType] = useState<'add' | 'remove' | 'temporary-out' | 'return' | 'damaged' | 'missing' | 'expired' | 'sample-demo'>('add');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showLargeQtyWarning, setShowLargeQtyWarning] = useState(false);
+  const [showBulkWarning, setShowBulkWarning] = useState(false);
 
   const products = getProducts();
 
@@ -39,61 +41,99 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
       return;
     }
 
+    const qty = parseInt(quantity);
+    if (isNaN(qty) || qty <= 0) {
+      toast.error('Please enter a valid quantity');
+      return;
+    }
+
+    // Large quantity warning
+    if (qty > 50 && !showLargeQtyWarning) {
+      setShowLargeQtyWarning(true);
+      return;
+    }
+
+    // Bulk adjustment warning
+    if (productId === 'all' && !showBulkWarning) {
+      setShowBulkWarning(true);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const qty = parseInt(quantity);
-      if (isNaN(qty) || qty <= 0) {
-        toast.error('Please enter a valid quantity');
-        setIsSubmitting(false);
-        return;
+      const productsToUpdate = productId === 'all' 
+        ? Object.keys(products) 
+        : [productId];
+
+      // Check for negative stock
+      for (const pid of productsToUpdate) {
+        const product = products[pid];
+        const isDeduction = ['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(adjustmentType);
+        
+        if (isDeduction && product.stock < qty) {
+          toast.error(`Cannot process: ${product.name} would have negative stock (Current: ${product.stock}, Requested: -${qty})`);
+          setIsSubmitting(false);
+          return;
+        }
       }
 
-      const product = products[productId];
-      const currentStock = product.stock;
-      
-      let newStock = currentStock;
-      let change = 0;
+      const productUpdates = productsToUpdate.map(pid => {
+        const product = products[pid];
+        const currentStock = product.stock;
+        
+        let newStock = currentStock;
+        let change = 0;
 
-      switch (adjustmentType) {
-        case 'add':
-        case 'return':
-          newStock = currentStock + qty;
-          change = qty;
-          break;
-        case 'remove':
-        case 'temporary-out':
-          newStock = Math.max(0, currentStock - qty);
-          change = -(currentStock - newStock);
-          break;
-      }
+        switch (adjustmentType) {
+          case 'add':
+          case 'return':
+            newStock = currentStock + qty;
+            change = qty;
+            break;
+          case 'remove':
+          case 'temporary-out':
+          case 'damaged':
+          case 'missing':
+          case 'expired':
+          case 'sample-demo':
+            newStock = Math.max(0, currentStock - qty);
+            change = -(currentStock - newStock);
+            break;
+        }
 
-      // Update stock
-      updateProductStock(productId, newStock);
+        // Update stock
+        updateProductStock(pid, newStock);
+
+        return {
+          productId: pid,
+          before: currentStock,
+          after: newStock,
+          change,
+        };
+      });
 
       // Log activity
       addActivityLog({
-        type: adjustmentType === 'add' || adjustmentType === 'remove' ? 'manual' : adjustmentType,
-        productUpdates: [
-          {
-            productId,
-            before: currentStock,
-            after: newStock,
-            change,
-          },
-        ],
+        type: adjustmentType as any,
+        productUpdates,
         userId: user.id,
         userName: user.name,
         notes,
       });
 
-      toast.success('Inventory updated successfully');
+      toast.success(productId === 'all' 
+        ? 'Successfully adjusted all 3 products' 
+        : 'Inventory updated successfully'
+      );
       
       // Reset form
       setProductId('');
       setAdjustmentType('add');
       setQuantity('');
       setNotes('');
+      setShowLargeQtyWarning(false);
+      setShowBulkWarning(false);
       
       onSuccess();
       onOpenChange(false);
@@ -106,7 +146,13 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => {
+      if (!o) {
+        setShowLargeQtyWarning(false);
+        setShowBulkWarning(false);
+      }
+      onOpenChange(o);
+    }}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>Manual Inventory Adjustment</DialogTitle>
@@ -114,57 +160,148 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
             Update product stock levels manually. All changes will be logged.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="product">Product *</Label>
-            <Select value={productId} onValueChange={setProductId} disabled={isSubmitting}>
-              <SelectTrigger id="product">
-                <SelectValue placeholder="Select a product" />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.values(products).map((product) => (
-                  <SelectItem key={product.id} value={product.id}>
-                    {product.name} (Current: {product.stock})
+        
+        {showLargeQtyWarning ? (
+          <div className="space-y-4 py-4">
+            <div className="flex items-start gap-3 p-4 rounded-lg bg-warning/10 border border-warning">
+              <span className="text-2xl">⚠️</span>
+              <div className="space-y-2">
+                <p className="font-semibold">Large Quantity Detected</p>
+                <p className="text-sm text-muted-foreground">
+                  You're about to adjust <strong>{quantity} units</strong>. This is more than 50 units.
+                </p>
+                <p className="text-sm font-medium">Are you sure this is correct?</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowLargeQtyWarning(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setShowLargeQtyWarning(false);
+                  handleSubmit({ preventDefault: () => {} } as any);
+                }}
+              >
+                Yes, I'm Sure
+              </Button>
+            </div>
+          </div>
+        ) : showBulkWarning ? (
+          <div className="space-y-4 py-4">
+            <div className="flex items-start gap-3 p-4 rounded-lg bg-warning/10 border border-warning">
+              <span className="text-2xl">⚠️</span>
+              <div className="space-y-2">
+                <p className="font-semibold">Bulk Adjustment Confirmation</p>
+                <p className="text-sm text-muted-foreground">
+                  This will adjust <strong>all 3 products</strong> by <strong>{quantity} units</strong> each.
+                </p>
+                <p className="text-sm font-medium">Continue?</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowBulkWarning(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setShowBulkWarning(false);
+                  handleSubmit({ preventDefault: () => {} } as any);
+                }}
+              >
+                Yes, Continue
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="product">Product *</Label>
+              <Select value={productId} onValueChange={setProductId} disabled={isSubmitting}>
+                <SelectTrigger id="product">
+                  <SelectValue placeholder="Select a product" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    <strong>All Products (Bulk Adjust)</strong>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                  {Object.values(products).map((product) => (
+                    <SelectItem key={product.id} value={product.id}>
+                      {product.name} (Current: {product.stock})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="space-y-2">
-            <Label>Adjustment Type *</Label>
-            <RadioGroup
-              value={adjustmentType}
-              onValueChange={(value) => setAdjustmentType(value as any)}
-              disabled={isSubmitting}
-              className="space-y-2"
-            >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="add" id="add" />
-                <Label htmlFor="add" className="font-normal cursor-pointer">
-                  Add Stock (+)
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="remove" id="remove" />
-                <Label htmlFor="remove" className="font-normal cursor-pointer">
-                  Remove Stock (-)
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="temporary-out" id="temporary-out" />
-                <Label htmlFor="temporary-out" className="font-normal cursor-pointer">
-                  Temporary Out (event/demo)
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="return" id="return" />
-                <Label htmlFor="return" className="font-normal cursor-pointer">
-                  Return to Stock
-                </Label>
-              </div>
-            </RadioGroup>
-          </div>
+            <div className="space-y-2">
+              <Label>Adjustment Type *</Label>
+              <RadioGroup
+                value={adjustmentType}
+                onValueChange={(value) => setAdjustmentType(value as any)}
+                disabled={isSubmitting}
+                className="grid grid-cols-2 gap-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="add" id="add" />
+                  <Label htmlFor="add" className="font-normal cursor-pointer">
+                    Add Stock (+)
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="remove" id="remove" />
+                  <Label htmlFor="remove" className="font-normal cursor-pointer">
+                    Remove Stock (-)
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="temporary-out" id="temporary-out" />
+                  <Label htmlFor="temporary-out" className="font-normal cursor-pointer">
+                    Temporary Out
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="return" id="return" />
+                  <Label htmlFor="return" className="font-normal cursor-pointer">
+                    Return to Stock
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="damaged" id="damaged" />
+                  <Label htmlFor="damaged" className="font-normal cursor-pointer">
+                    Damaged
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="missing" id="missing" />
+                  <Label htmlFor="missing" className="font-normal cursor-pointer">
+                    Missing
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="expired" id="expired" />
+                  <Label htmlFor="expired" className="font-normal cursor-pointer">
+                    Expired
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="sample-demo" id="sample-demo" />
+                  <Label htmlFor="sample-demo" className="font-normal cursor-pointer">
+                    Sample/Demo
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
 
           <div className="space-y-2">
             <Label htmlFor="quantity">Quantity *</Label>
@@ -193,20 +330,21 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Submitting...' : 'Submit Adjustment'}
-            </Button>
-          </div>
-        </form>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Submitting...' : 'Submit Adjustment'}
+              </Button>
+            </div>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

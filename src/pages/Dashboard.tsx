@@ -8,7 +8,7 @@ import PackageCalculator from '@/components/PackageCalculator';
 import ActivityFeed from '@/components/ActivityFeed';
 import ManualAdjustmentModal from '@/components/ManualAdjustmentModal';
 import ExportSheetsDialog from '@/components/ExportSheetsDialog';
-import { Plus, RefreshCw, FileSpreadsheet } from 'lucide-react';
+import { Plus, RefreshCw, FileSpreadsheet, Package } from 'lucide-react';
 
 const PACKAGES: PackageType[] = [
   { type: 'bronze', name: 'Bronze Package', multiplier: 1, price: 775, icon: '🥉' },
@@ -28,6 +28,27 @@ const Dashboard = () => {
     setActivities(getActivityLog());
   };
 
+  // Calculate stats
+  const totalOrders = activities.filter(a => a.type === 'invoice').length;
+  const thisMonth = activities.filter(a => {
+    const activityDate = new Date(a.timestamp);
+    const now = new Date();
+    return activityDate.getMonth() === now.getMonth() && 
+           activityDate.getFullYear() === now.getFullYear() &&
+           a.type === 'invoice';
+  }).length;
+  
+  const thisWeek = activities.filter(a => {
+    const activityDate = new Date(a.timestamp);
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return activityDate >= weekAgo && a.type === 'invoice';
+  }).length;
+
+  const totalValue = Object.values(products).reduce(
+    (sum, p) => sum + (p.stock * p.retailPrice), 0
+  );
+
   useEffect(() => {
     refreshData();
   }, []);
@@ -46,6 +67,42 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6">
+      {/* Summary Stats */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="p-6 rounded-lg border bg-card">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-muted-foreground">Total Orders</span>
+            <Package className="h-5 w-5 text-primary" />
+          </div>
+          <div className="text-3xl font-bold">{totalOrders}</div>
+          <p className="text-xs text-muted-foreground mt-1">All time</p>
+        </div>
+        <div className="p-6 rounded-lg border bg-card">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-muted-foreground">This Month</span>
+            <FileSpreadsheet className="h-5 w-5 text-primary" />
+          </div>
+          <div className="text-3xl font-bold">{thisMonth}</div>
+          <p className="text-xs text-muted-foreground mt-1">November 2025</p>
+        </div>
+        <div className="p-6 rounded-lg border bg-card">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-muted-foreground">This Week</span>
+            <RefreshCw className="h-5 w-5 text-primary" />
+          </div>
+          <div className="text-3xl font-bold">{thisWeek}</div>
+          <p className="text-xs text-muted-foreground mt-1">Last 7 days</p>
+        </div>
+        <div className="p-6 rounded-lg border bg-card">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-muted-foreground">Inventory Value</span>
+            <Plus className="h-5 w-5 text-primary" />
+          </div>
+          <div className="text-3xl font-bold">RM {totalValue.toLocaleString()}</div>
+          <p className="text-xs text-muted-foreground mt-1">Current retail value</p>
+        </div>
+      </div>
+
       {/* Action Buttons */}
       <div className="flex flex-wrap gap-3">
         {canEdit && (
@@ -77,8 +134,13 @@ const Dashboard = () => {
       {/* Package Calculator */}
       <PackageCalculator packages={PACKAGES} availableSets={availableSets} />
 
-      {/* Activity Feed */}
-      <ActivityFeed activities={activities} limit={10} />
+      {/* Activity Feed - Sort by newest first */}
+      <ActivityFeed 
+        activities={[...activities].sort((a, b) => 
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        )} 
+        limit={10} 
+      />
 
       {/* Manual Adjustment Modal */}
       <ManualAdjustmentModal
