@@ -4,6 +4,7 @@ import { ActivityLog } from '@/types/inventory';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +17,8 @@ const ActivityHistory = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [productFilter, setProductFilter] = useState<string>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
@@ -34,9 +37,14 @@ const ActivityHistory = () => {
       const matchesProduct = productFilter === 'all' || 
         activity.productUpdates.some(u => u.productId === productFilter);
 
-      return matchesSearch && matchesType && matchesProduct;
-    });
-  }, [activities, searchQuery, typeFilter, productFilter]);
+      // Date range filter
+      const activityDate = new Date(activity.timestamp);
+      const matchesDateFrom = !dateFrom || activityDate >= new Date(dateFrom);
+      const matchesDateTo = !dateTo || activityDate <= new Date(dateTo + 'T23:59:59');
+
+      return matchesSearch && matchesType && matchesProduct && matchesDateFrom && matchesDateTo;
+    }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [activities, searchQuery, typeFilter, productFilter, dateFrom, dateTo]);
 
   const paginatedActivities = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -125,6 +133,8 @@ const ActivityHistory = () => {
                 <SelectItem value="all">All Types</SelectItem>
                 <SelectItem value="invoice">Invoice</SelectItem>
                 <SelectItem value="manual">Manual Adjustment</SelectItem>
+                <SelectItem value="add">Add Stock</SelectItem>
+                <SelectItem value="remove">Remove Stock</SelectItem>
                 <SelectItem value="temporary-out">Temporary Out</SelectItem>
                 <SelectItem value="return">Return to Stock</SelectItem>
                 <SelectItem value="damaged">Damaged</SelectItem>
@@ -150,6 +160,65 @@ const ActivityHistory = () => {
               <Download className="h-4 w-4" />
               Export CSV
             </Button>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Date Range</Label>
+            <div className="grid gap-4 md:grid-cols-5">
+              <div className="space-y-1">
+                <Label htmlFor="dateFrom" className="text-xs text-muted-foreground">From</Label>
+                <Input
+                  id="dateFrom"
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="dateTo" className="text-xs text-muted-foreground">To</Label>
+                <Input
+                  id="dateTo"
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const today = new Date().toISOString().split('T')[0];
+                  setDateFrom(today);
+                  setDateTo(today);
+                }}
+              >
+                Today
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const today = new Date();
+                  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+                  setDateFrom(weekAgo.toISOString().split('T')[0]);
+                  setDateTo(today.toISOString().split('T')[0]);
+                }}
+              >
+                Last 7 Days
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSearchQuery('');
+                  setTypeFilter('all');
+                  setProductFilter('all');
+                  setDateFrom('');
+                  setDateTo('');
+                }}
+              >
+                Clear All
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getProducts, updateProductStock, addActivityLog } from '@/lib/storage';
+import { getProducts, updateProductStock, getActivityLog } from '@/lib/storage';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,8 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
   const [adjustmentType, setAdjustmentType] = useState<'add' | 'remove' | 'temporary-out' | 'return' | 'damaged' | 'missing' | 'expired' | 'sample-demo'>('add');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
+  const [adjustmentDate, setAdjustmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [adjustmentTime, setAdjustmentTime] = useState(new Date().toTimeString().split(' ')[0].substring(0, 5));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLargeQtyWarning, setShowLargeQtyWarning] = useState(false);
   const [showBulkWarning, setShowBulkWarning] = useState(false);
@@ -44,6 +46,14 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) {
       toast.error('Please enter a valid quantity');
+      return;
+    }
+
+    // Validate date is not in future
+    const selectedDateTime = new Date(`${adjustmentDate}T${adjustmentTime}`);
+    const now = new Date();
+    if (selectedDateTime > now) {
+      toast.error('Cannot select future date');
       return;
     }
 
@@ -113,14 +123,20 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
         };
       });
 
-      // Log activity
-      addActivityLog({
+      // Log activity with custom timestamp
+      const customTimestamp = new Date(`${adjustmentDate}T${adjustmentTime}`).toISOString();
+      const logs = getActivityLog();
+      const newLog = {
+        id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: customTimestamp,
         type: adjustmentType as any,
         productUpdates,
         userId: user.id,
         userName: user.name,
         notes,
-      });
+      };
+      logs.push(newLog);
+      localStorage.setItem('ahad-activity-log', JSON.stringify(logs));
 
       toast.success(productId === 'all' 
         ? 'Successfully adjusted all 3 products' 
@@ -132,6 +148,8 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
       setAdjustmentType('add');
       setQuantity('');
       setNotes('');
+      setAdjustmentDate(new Date().toISOString().split('T')[0]);
+      setAdjustmentTime(new Date().toTimeString().split(' ')[0].substring(0, 5));
       setShowLargeQtyWarning(false);
       setShowBulkWarning(false);
       
@@ -315,6 +333,31 @@ const ManualAdjustmentModal = ({ open, onOpenChange, onSuccess }: ManualAdjustme
               disabled={isSubmitting}
               required
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="adjustmentDate">Date of Adjustment *</Label>
+              <Input
+                id="adjustmentDate"
+                type="date"
+                value={adjustmentDate}
+                onChange={(e) => setAdjustmentDate(e.target.value)}
+                max={new Date().toISOString().split('T')[0]}
+                disabled={isSubmitting}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="adjustmentTime">Time (Optional)</Label>
+              <Input
+                id="adjustmentTime"
+                type="time"
+                value={adjustmentTime}
+                onChange={(e) => setAdjustmentTime(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
           </div>
 
           <div className="space-y-2">
