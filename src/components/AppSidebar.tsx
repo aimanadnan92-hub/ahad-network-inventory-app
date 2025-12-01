@@ -1,4 +1,4 @@
-import { Home, History, BarChart3, FileSpreadsheet, Settings, LogOut } from 'lucide-react';
+import { Home, History, BarChart3, FileSpreadsheet, Settings, LogOut, Key } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -59,18 +59,32 @@ export function AppSidebar() {
                 </SidebarMenuItem>
               ))}
               {isAdmin && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <NavLink
-                      to="/settings"
-                      className="hover:bg-secondary/50"
-                      activeClassName="bg-secondary text-primary font-medium"
-                    >
-                      <Settings className="h-4 w-4" />
-                      {!isCollapsed && <span>Settings</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to="/api-integration"
+                        className="hover:bg-secondary/50"
+                        activeClassName="bg-secondary text-primary font-medium"
+                      >
+                        <Key className="h-4 w-4" />
+                        {!isCollapsed && <span>API Integration</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to="/settings"
+                        className="hover:bg-secondary/50"
+                        activeClassName="bg-secondary text-primary font-medium"
+                      >
+                        <Settings className="h-4 w-4" />
+                        {!isCollapsed && <span>Settings</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
               )}
             </SidebarMenu>
           </SidebarGroupContent>

@@ -28,21 +28,47 @@ const Dashboard = () => {
     setActivities(getActivityLog());
   };
 
-  // Calculate stats
-  const totalOrders = activities.filter(a => a.type === 'invoice').length;
-  const thisMonth = activities.filter(a => {
-    const activityDate = new Date(a.timestamp);
+  // Calculate stats - count unique orders only
+  const uniqueOrders = [...new Set(
+    activities
+      .filter(a => a.type === 'invoice' && a.orderNumber)
+      .map(a => a.orderNumber)
+  )];
+  const totalOrders = uniqueOrders.length;
+  
+  // Count orders by package type
+  const ordersByPackage = uniqueOrders.reduce((acc, orderNum) => {
+    const orderActivities = activities.filter(a => a.orderNumber === orderNum);
+    if (orderActivities.length === 0) return acc;
+    
+    // Check quantity deducted to determine package type
+    const firstActivity = orderActivities[0];
+    const change = Math.abs(firstActivity.productUpdates[0]?.change || 0);
+    
+    if (change === 5) acc.gold++;
+    else if (change === 2) acc.silver++;
+    else if (change === 1 && orderActivities.length === 3) acc.bronze++;
+    else acc.individual++;
+    
+    return acc;
+  }, { gold: 0, silver: 0, bronze: 0, individual: 0 });
+  
+  const thisMonth = uniqueOrders.filter(orderNum => {
+    const orderActivity = activities.find(a => a.orderNumber === orderNum);
+    if (!orderActivity) return false;
+    const activityDate = new Date(orderActivity.timestamp);
     const now = new Date();
     return activityDate.getMonth() === now.getMonth() && 
-           activityDate.getFullYear() === now.getFullYear() &&
-           a.type === 'invoice';
+           activityDate.getFullYear() === now.getFullYear();
   }).length;
   
-  const thisWeek = activities.filter(a => {
-    const activityDate = new Date(a.timestamp);
+  const thisWeek = uniqueOrders.filter(orderNum => {
+    const orderActivity = activities.find(a => a.orderNumber === orderNum);
+    if (!orderActivity) return false;
+    const activityDate = new Date(orderActivity.timestamp);
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return activityDate >= weekAgo && a.type === 'invoice';
+    return activityDate >= weekAgo;
   }).length;
 
   const totalValue = Object.values(products).reduce(
@@ -76,6 +102,27 @@ const Dashboard = () => {
           </div>
           <div className="text-3xl font-bold">{totalOrders}</div>
           <p className="text-xs text-muted-foreground mt-1">All time</p>
+          <div className="mt-3 pt-3 border-t space-y-1">
+            <div className="text-xs text-muted-foreground">Breakdown:</div>
+            <div className="text-xs space-y-0.5">
+              <div className="flex items-center gap-1">
+                <span>🥇</span>
+                <span>Gold: {ordersByPackage.gold} orders</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>🥈</span>
+                <span>Silver: {ordersByPackage.silver} orders</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>🥉</span>
+                <span>Bronze: {ordersByPackage.bronze} orders</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>📦</span>
+                <span>Individual: {ordersByPackage.individual} orders</span>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="p-6 rounded-lg border bg-card">
           <div className="flex items-center justify-between mb-2">
