@@ -17,12 +17,6 @@ const PACKAGES: PackageType[] = [
   { type: 'gold', name: 'Gold Package', multiplier: 5, price: 2930, icon: '🥇' },
 ];
 
-// Explicit order lists for accurate counting (Historical Data)
-const GOLD_ORDERS = ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'];
-const SILVER_ORDERS = ['1363', '1368', '1502', '1504'];
-const BRONZE_ORDERS = ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'];
-const INDIVIDUAL_ORDERS = ['1367', '1370', '1501'];
-
 const Dashboard = () => {
   const { user } = useAuth();
   const [products, setProducts] = useState(getProducts());
@@ -31,11 +25,11 @@ const Dashboard = () => {
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // New Sync Function
+  // Sync Data Function
   const refreshData = async () => {
     setIsSyncing(true);
     
-    // 1. Load local immediately (for speed)
+    // 1. Load local immediately
     setProducts(getProducts());
     setActivities(getActivityLog());
 
@@ -48,7 +42,10 @@ const Dashboard = () => {
       toast.success("Synced with Google Sheets");
     } else {
       // If sync fails (e.g. offline), we still have local data
-      toast.error("Sync failed, using cached data");
+      // Only show error if we have NO data at all
+      if (Object.keys(products).length === 0) {
+         toast.error("Sync failed, please check connection");
+      }
     }
     
     setIsSyncing(false);
@@ -171,9 +168,9 @@ const Dashboard = () => {
       {/* Package Calculator */}
       <PackageCalculator packages={PACKAGES} availableSets={availableSets} />
 
-      {/* Activity Feed */}
+      {/* Activity Feed - Explicitly Sorted Newest First */}
       <ActivityFeed 
-        activities={activities} 
+        activities={[...activities].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())} 
         limit={10} 
       />
 
