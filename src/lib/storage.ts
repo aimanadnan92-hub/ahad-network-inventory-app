@@ -1,5 +1,8 @@
 import { Product, ActivityLog, User } from '@/types/inventory';
 
+// YOUR N8N WEBHOOK URL
+const N8N_API_URL = 'https://n8n.ahader.cloud/webhook/get-inventory'; 
+
 const STORAGE_KEYS = {
   PRODUCTS: 'ahad-products',
   ACTIVITY_LOG: 'ahad-activity-log',
@@ -7,90 +10,59 @@ const STORAGE_KEYS = {
   CURRENT_USER: 'ahad-current-user',
 } as const;
 
-// Products
-export const getProducts = (): Record<string, Product> => {
-  const stored = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-  if (stored) {
-    return JSON.parse(stored);
-  }
-  
-  // Initialize with production stock levels (after 31 orders processed)
-  const defaultProducts: Record<string, Product> = {
-    'colostrum-p': {
-      id: 'colostrum-p',
-      name: 'Ahad Colostrum P',
-      sku: 'ACP-001',
-      stock: 914, // 1000 - 65(Gold) - 8(Silver) - 11(Bronze) - 2(Individual)
-      costPrice: 37.00,
-      retailPrice: 175.00,
-      minAlert: 100,
-      lastUpdated: new Date('2025-11-25T14:18:00').toISOString(),
-    },
-    'colostrum-g': {
-      id: 'colostrum-g',
-      name: 'Ahad Colostrum G',
-      sku: 'ACG-001',
-      stock: 916, // 1000 - 65(Gold) - 8(Silver) - 11(Bronze)
-      costPrice: 48.00,
-      retailPrice: 150.00,
-      minAlert: 100,
-      lastUpdated: new Date('2025-11-25T14:18:00').toISOString(),
-    },
-    'barley-best': {
-      id: 'barley-best',
-      name: 'Ahad Barley Best',
-      sku: 'ABB-001',
-      stock: 900, // 1000 - 65(Gold) - 8(Silver) - 11(Bronze) - 16(Individual)
-      costPrice: 24.00,
-      retailPrice: 135.00,
-      minAlert: 100,
-      lastUpdated: new Date('2025-11-25T14:18:00').toISOString(),
-    },
-  };
-  
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(defaultProducts));
-  return defaultProducts;
+// --- INITIAL DATA (The Base Stock) ---
+const INITIAL_STOCK = {
+  'colostrum-p': 1000,
+  'colostrum-g': 1000,
+  'barley-best': 1000
 };
 
-export const saveProducts = (products: Record<string, Product>) => {
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+// Default products structure
+const defaultProducts: Record<string, Product> = {
+  'colostrum-p': {
+    id: 'colostrum-p',
+    name: 'Ahad Colostrum P',
+    sku: 'ACP-001',
+    stock: INITIAL_STOCK['colostrum-p'],
+    costPrice: 37.00,
+    retailPrice: 175.00,
+    minAlert: 100,
+    lastUpdated: new Date().toISOString(),
+  },
+  'colostrum-g': {
+    id: 'colostrum-g',
+    name: 'Ahad Colostrum G',
+    sku: 'ACG-001',
+    stock: INITIAL_STOCK['colostrum-g'],
+    costPrice: 48.00,
+    retailPrice: 150.00,
+    minAlert: 100,
+    lastUpdated: new Date().toISOString(),
+  },
+  'barley-best': {
+    id: 'barley-best',
+    name: 'Ahad Barley Best',
+    sku: 'ABB-001',
+    stock: INITIAL_STOCK['barley-best'],
+    costPrice: 24.00,
+    retailPrice: 135.00,
+    minAlert: 100,
+    lastUpdated: new Date().toISOString(),
+  },
 };
 
-export const updateProductStock = (productId: string, newStock: number) => {
-  const products = getProducts();
-  if (products[productId]) {
-    products[productId].stock = newStock;
-    products[productId].lastUpdated = new Date().toISOString();
-    saveProducts(products);
-  }
-};
-
-// Activity Log
-export const getActivityLog = (): ActivityLog[] => {
-  const stored = localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG);
-  if (stored) {
-    return JSON.parse(stored);
-  }
-  
-  // Initialize with real production orders (31 orders from WooCommerce)
-  const defaultActivityLog = generateProductionOrders();
-  localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(defaultActivityLog));
-  return defaultActivityLog;
-};
-
-// Generate production orders from real WooCommerce data
+// --- OLD HARDCODED DATA (DO NOT DELETE) ---
+// This function generates the historical 31 orders you manually entered
 const generateProductionOrders = (): ActivityLog[] => {
   const orders: ActivityLog[] = [];
   let activityCounter = 1;
   
-  // Helper to create activity log entry
   const createLogEntry = (
     orderNumber: string,
     orderDate: string,
     customer: string,
     productId: string,
     productName: string,
-    stockBefore: number,
     change: number
   ): ActivityLog => ({
     id: `activity-${String(activityCounter++).padStart(3, '0')}`,
@@ -99,8 +71,8 @@ const generateProductionOrders = (): ActivityLog[] => {
     orderNumber,
     productUpdates: [{
       productId,
-      before: stockBefore,
-      after: stockBefore + change,
+      before: 0, // Recalculated dynamically later
+      after: 0,  // Recalculated dynamically later
       change
     }],
     userId: 'system',
@@ -108,14 +80,7 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // Track stock levels throughout processing
-  let stockLevels = {
-    'colostrum-p': 1000,
-    'colostrum-g': 1000,
-    'barley-best': 1000
-  };
-  
-  // GOLD MEMBERSHIP ORDERS (13 orders - 5 of each)
+  // GOLD MEMBERSHIP ORDERS
   const goldOrders = [
     { order: '1437', date: '2024-10-24T07:07:00', customer: 'NORLIA BINTI BAHARUN' },
     { order: '150', date: '2024-10-24T08:49:00', customer: 'Nor Amalina binti Abdul Wahab' },
@@ -136,12 +101,11 @@ const generateProductionOrders = (): ActivityLog[] => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(productId => {
       const productName = productId === 'colostrum-p' ? 'Ahad Colostrum P' : 
                          productId === 'colostrum-g' ? 'Ahad Colostrum G' : 'Ahad Barley Best';
-      orders.push(createLogEntry(order, date, customer, productId, productName, stockLevels[productId], -5));
-      stockLevels[productId] -= 5;
+      orders.push(createLogEntry(order, date, customer, productId, productName, -5));
     });
   });
   
-  // BRONZE MEMBERSHIP ORDERS (11 orders - 1 of each)
+  // BRONZE MEMBERSHIP ORDERS
   const bronzeOrders = [
     { order: '1227', date: '2024-11-25T13:40:00', customer: 'Romli bin Sidin' },
     { order: '1310', date: '2025-02-07T14:31:00', customer: 'Rahenah binti Rahim' },
@@ -160,12 +124,11 @@ const generateProductionOrders = (): ActivityLog[] => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(productId => {
       const productName = productId === 'colostrum-p' ? 'Ahad Colostrum P' : 
                          productId === 'colostrum-g' ? 'Ahad Colostrum G' : 'Ahad Barley Best';
-      orders.push(createLogEntry(order, date, customer, productId, productName, stockLevels[productId], -1));
-      stockLevels[productId] -= 1;
+      orders.push(createLogEntry(order, date, customer, productId, productName, -1));
     });
   });
   
-  // SILVER MEMBERSHIP ORDERS (4 orders - 2 of each)
+  // SILVER MEMBERSHIP ORDERS
   const silverOrders = [
     { order: '1363', date: '2025-03-18T09:34:00', customer: 'Shamsina Liza Binti Manaf' },
     { order: '1368', date: '2025-05-07T07:53:00', customer: 'ASZELAN BIN TOKININ' },
@@ -177,93 +140,163 @@ const generateProductionOrders = (): ActivityLog[] => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(productId => {
       const productName = productId === 'colostrum-p' ? 'Ahad Colostrum P' : 
                          productId === 'colostrum-g' ? 'Ahad Colostrum G' : 'Ahad Barley Best';
-      orders.push(createLogEntry(order, date, customer, productId, productName, stockLevels[productId], -2));
-      stockLevels[productId] -= 2;
+      orders.push(createLogEntry(order, date, customer, productId, productName, -2));
     });
   });
   
-  // INDIVIDUAL PRODUCT ORDERS (3 orders)
-  // Order #1367 - Barley Best x8
+  // INDIVIDUAL PRODUCT ORDERS
   orders.push(createLogEntry('1367', '2025-04-27T01:26:00', 'Husaini Bin Abdullah', 
-    'barley-best', 'Ahad Barley Best', stockLevels['barley-best'], -8));
-  stockLevels['barley-best'] -= 8;
+    'barley-best', 'Ahad Barley Best', -8));
   
-  // Order #1370 - Barley Best x4
   orders.push(createLogEntry('1370', '2025-05-15T10:03:00', 'Husaini Bin Abdullah', 
-    'barley-best', 'Ahad Barley Best', stockLevels['barley-best'], -4));
-  stockLevels['barley-best'] -= 4;
-  
-  // Order #1501 - Colostrum P x2 + Barley Best x4
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00', 'Husaini Bin Abdullah', 
-    'colostrum-p', 'Ahad Colostrum P', stockLevels['colostrum-p'], -2));
-  stockLevels['colostrum-p'] -= 2;
+    'barley-best', 'Ahad Barley Best', -4));
   
   orders.push(createLogEntry('1501', '2025-11-16T17:26:00', 'Husaini Bin Abdullah', 
-    'barley-best', 'Ahad Barley Best', stockLevels['barley-best'], -4));
-  stockLevels['barley-best'] -= 4;
+    'colostrum-p', 'Ahad Colostrum P', -2));
   
-  // Final stock should be: Colostrum P: 914, Colostrum G: 916, Barley Best: 900
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00', 'Husaini Bin Abdullah', 
+    'barley-best', 'Ahad Barley Best', -4));
   
-  return orders.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  return orders;
 };
 
-export const addActivityLog = (log: Omit<ActivityLog, 'id' | 'timestamp'>) => {
-  const logs = getActivityLog();
-  const newLog: ActivityLog = {
-    ...log,
-    id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    timestamp: new Date().toISOString(),
-  };
-  logs.unshift(newLog);
-  localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(logs));
-  return newLog;
-};
-// Users
-export const getUsers = (): User[] => {
-  // We removed the 'if (stored)' check to FORCE these users to load on every device
+// --- HELPER: Parse Google Sheet "Products" Column ---
+const parseProductString = (productStr: string) => {
+  if (!productStr) return [];
   
-  const defaultUsers: User[] = [
-    // 1. ADMIN
-    {
-      id: 'user-001',
-      email: 'admin@ahadnetwork.com',
-      passwordHash: 'AhadNetwork2025!', 
-      role: 'admin',
-      name: 'Admin User',
-      createdAt: new Date().toISOString(),
-    },
-    // 2. STAFF (Aiman)
-    {
-      id: 'user-002',
-      email: 'aiman.adnan92@gmail.com',
-      passwordHash: 'Staff123!', 
-      role: 'staff',
-      name: 'Aiman',
-      createdAt: new Date().toISOString(),
-    },
-    // 3. VIEWER (Farah)
-    {
-      id: 'user-003',
-      email: 'farahaimannnn@gmail.com',
-      passwordHash: 'Viewer123!', 
-      role: 'viewer',
-      name: 'Farah',
-      createdAt: new Date().toISOString(),
-    },
-    // 4. VIEWER (Anuar)
-    {
-      id: 'user-004',
-      email: 's.anuar1990@gmail.com',
-      passwordHash: 'Viewer123!', 
-      role: 'viewer',
-      name: 'Anuar',
-      createdAt: new Date().toISOString(),
+  const changes: { productId: string; change: number }[] = [];
+  const items = productStr.split(',').map(s => s.trim());
+
+  items.forEach(item => {
+    const qtyMatch = item.match(/\(x(\d+)\)/);
+    const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+    const name = item.toLowerCase();
+
+    if (name.includes('gold')) {
+      changes.push({ productId: 'colostrum-p', change: -5 * qty });
+      changes.push({ productId: 'colostrum-g', change: -5 * qty });
+      changes.push({ productId: 'barley-best', change: -5 * qty });
+    } else if (name.includes('silver')) {
+      changes.push({ productId: 'colostrum-p', change: -2 * qty });
+      changes.push({ productId: 'colostrum-g', change: -2 * qty });
+      changes.push({ productId: 'barley-best', change: -2 * qty });
+    } else if (name.includes('bronze')) {
+      changes.push({ productId: 'colostrum-p', change: -1 * qty });
+      changes.push({ productId: 'colostrum-g', change: -1 * qty });
+      changes.push({ productId: 'barley-best', change: -1 * qty });
+    } else if (name.includes('barley')) {
+      changes.push({ productId: 'barley-best', change: -1 * qty });
+    } else if (name.includes('colostrum p')) {
+      changes.push({ productId: 'colostrum-p', change: -1 * qty });
+    } else if (name.includes('colostrum g')) {
+      changes.push({ productId: 'colostrum-g', change: -1 * qty });
     }
-  ];
+  });
+
+  return changes;
+};
+
+// --- SYNC FUNCTION (Combine Old Data + New Google Sheets Data) ---
+export const syncWithGoogleSheets = async () => {
+  console.log('Syncing with Google Sheets...');
   
-  // Save to storage so the app can use them
-  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(defaultUsers));
-  return defaultUsers;
+  try {
+    const response = await fetch(N8N_API_URL);
+    if (!response.ok) throw new Error('Failed to fetch from n8n');
+    
+    const sheetData = await response.json();
+    console.log('Sheet Data Received:', sheetData);
+    
+    // 1. Get Old Hardcoded Logs
+    const oldLogs = generateProductionOrders();
+
+    // 2. Convert New Sheet Rows to Logs
+    const newLogs: ActivityLog[] = sheetData.map((row: any, index: number) => {
+      const status = row['Status']?.toLowerCase() || '';
+      const isPaid = status === 'processing' || status === 'completed';
+      
+      // IMPORTANT: Skip orders if they already exist in oldLogs (avoid double counting)
+      const orderId = row['Order ID']?.toString();
+      const existsInOld = oldLogs.some(log => log.orderNumber === orderId);
+      
+      if (existsInOld) return null; // Skip duplicate old orders found in sheet
+
+      const changes = isPaid ? parseProductString(row['Products']) : [];
+
+      return {
+        id: `sheet-${orderId || index}`,
+        timestamp: row['Date'] || new Date().toISOString(),
+        type: 'invoice',
+        orderNumber: orderId,
+        productUpdates: changes.map(c => ({
+          productId: c.productId,
+          before: 0,
+          after: 0,
+          change: c.change
+        })),
+        userId: 'system',
+        userName: row['Customer'] || 'WooCommerce',
+        notes: `${row['Status']} - ${row['Products']}`
+      };
+    }).filter((log: any) => log !== null); // Remove nulls
+
+    // 3. Combine All Logs (Old + New)
+    const allLogs = [...oldLogs, ...newLogs];
+
+    // 4. Recalculate Stock from Scratch (1000 base)
+    const newProducts = JSON.parse(JSON.stringify(defaultProducts));
+    
+    // Sort logs oldest -> newest
+    const sortedLogs = allLogs.sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    sortedLogs.forEach(log => {
+      log.productUpdates.forEach(update => {
+        if (newProducts[update.productId]) {
+          update.before = newProducts[update.productId].stock;
+          newProducts[update.productId].stock += update.change;
+          update.after = newProducts[update.productId].stock;
+          newProducts[update.productId].lastUpdated = log.timestamp;
+        }
+      });
+    });
+
+    // Save to Cache
+    localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
+    
+    return { products: newProducts, logs: sortedLogs.reverse() };
+
+  } catch (error) {
+    console.error('Sync Error:', error);
+    return null;
+  }
+};
+
+// --- GETTERS ---
+export const getProducts = (): Record<string, Product> => {
+  const stored = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
+  return stored ? JSON.parse(stored) : defaultProducts;
+};
+
+export const getActivityLog = (): ActivityLog[] => {
+  const stored = localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG);
+  // If nothing in cache, load at least the old hardcoded data
+  return stored ? JSON.parse(stored) : generateProductionOrders().reverse();
+};
+
+// --- USERS ---
+export const getUsers = (): User[] => {
+  const stored = localStorage.getItem(STORAGE_KEYS.USERS);
+  const defaultUsers: User[] = [
+    { id: 'user-001', email: 'admin@ahadnetwork.com', passwordHash: 'AhadNetwork2025!', role: 'admin', name: 'Admin User', createdAt: new Date().toISOString() },
+    { id: 'user-002', email: 'aiman.adnan92@gmail.com', passwordHash: 'Staff123!', role: 'staff', name: 'Aiman', createdAt: new Date().toISOString() },
+    { id: 'user-003', email: 'farahaimannnn@gmail.com', passwordHash: 'Viewer123!', role: 'viewer', name: 'Farah', createdAt: new Date().toISOString() },
+    { id: 'user-004', email: 's.anuar1990@gmail.com', passwordHash: 'Viewer123!', role: 'viewer', name: 'Anuar', createdAt: new Date().toISOString() }
+  ];
+  if (!stored) localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(defaultUsers));
+  return stored ? JSON.parse(stored) : defaultUsers;
 };
 
 export const saveUsers = (users: User[]) => {
@@ -279,7 +312,6 @@ export const updateUserLastLogin = (userId: string) => {
   }
 };
 
-// Current User Session
 export const getCurrentUser = (): User | null => {
   const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
   return stored ? JSON.parse(stored) : null;
@@ -290,5 +322,18 @@ export const setCurrentUser = (user: User | null) => {
     localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
   } else {
     localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  }
+};
+
+export const saveProducts = (products: Record<string, Product>) => {
+  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+};
+
+export const updateProductStock = async (productId: string, newStock: number) => {
+  const products = getProducts();
+  if (products[productId]) {
+    products[productId].stock = newStock;
+    products[productId].lastUpdated = new Date().toISOString();
+    saveProducts(products);
   }
 };
