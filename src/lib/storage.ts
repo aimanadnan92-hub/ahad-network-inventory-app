@@ -218,27 +218,52 @@ export const addActivityLog = (log: Omit<ActivityLog, 'id' | 'timestamp'>) => {
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(logs));
   return newLog;
 };
-
-// Users
 export const getUsers = (): User[] => {
-  const stored = localStorage.getItem(STORAGE_KEYS.USERS);
-  if (stored) {
-    return JSON.parse(stored);
-  }
+  // We removed the 'if (stored)' check to FORCE these users to load on every device
   
-  // Initialize with default admin user
   const defaultUsers: User[] = [
+    // 1. ADMIN
     {
       id: 'user-001',
       email: 'admin@ahadnetwork.com',
-      passwordHash: 'AhadNetwork2025!', // In production, this should be properly hashed
+      passwordHash: 'AhadNetwork2025!', 
       role: 'admin',
       name: 'Admin User',
       createdAt: new Date().toISOString(),
     },
+    // 2. STAFF (Aiman)
+    {
+      id: 'user-002',
+      email: 'aiman.adnan92@gmail.com',
+      passwordHash: 'Staff123!', 
+      role: 'staff',
+      name: 'Aiman',
+      createdAt: new Date().toISOString(),
+    },
+    // 3. VIEWER (Farah)
+    {
+      id: 'user-003',
+      email: 'farahaimannnn@gmail.com',
+      passwordHash: 'Viewer123!', 
+      role: 'viewer',
+      name: 'Farah',
+      createdAt: new Date().toISOString(),
+    },
+    // 4. VIEWER (Anuar)
+    {
+      id: 'user-004',
+      email: 's.anuar1990@gmail.com',
+      passwordHash: 'Viewer123!', 
+      role: 'viewer',
+      name: 'Anuar',
+      createdAt: new Date().toISOString(),
+    }
   ];
   
+  // Save to storage so the app can use them
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(defaultUsers));
+  return defaultUsers;
+};
   return defaultUsers;
 };
 
