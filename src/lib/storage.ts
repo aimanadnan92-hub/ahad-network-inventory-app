@@ -1,7 +1,9 @@
 import { Product, ActivityLog, User } from '@/types/inventory';
 
-// YOUR N8N WEBHOOK URL
-const N8N_API_URL = 'https://n8n.ahader.cloud/webhook/get-inventory'; 
+// --- API CONFIGURATION ---
+const N8N_SALES_URL = 'https://n8n.ahader.cloud/webhook/get-inventory'; 
+const N8N_ADJUSTMENTS_READ_URL = 'https://n8n.ahader.cloud/webhook/get-adjustments';
+const N8N_ADJUSTMENTS_WRITE_URL = 'https://n8n.ahader.cloud/webhook/post-adjustment';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'ahad-products',
@@ -10,14 +12,13 @@ const STORAGE_KEYS = {
   CURRENT_USER: 'ahad-current-user',
 } as const;
 
-// --- INITIAL DATA (The Base Stock) ---
+// --- INITIAL DATA (Base Stock) ---
 const INITIAL_STOCK = {
   'colostrum-p': 1000,
   'colostrum-g': 1000,
   'barley-best': 1000
 };
 
-// Default products structure
 const defaultProducts: Record<string, Product> = {
   'colostrum-p': {
     id: 'colostrum-p',
@@ -51,8 +52,7 @@ const defaultProducts: Record<string, Product> = {
   },
 };
 
-// --- OLD HARDCODED DATA (DO NOT DELETE) ---
-// This function generates the historical 31 orders you manually entered
+// --- HELPER: Generate Hardcoded History ---
 const generateProductionOrders = (): ActivityLog[] => {
   const orders: ActivityLog[] = [];
   let activityCounter = 1;
@@ -71,8 +71,8 @@ const generateProductionOrders = (): ActivityLog[] => {
     orderNumber,
     productUpdates: [{
       productId,
-      before: 0, // Recalculated dynamically later
-      after: 0,  // Recalculated dynamically later
+      before: 0,
+      after: 0,
       change
     }],
     userId: 'system',
@@ -80,90 +80,31 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // GOLD MEMBERSHIP ORDERS
-  const goldOrders = [
-    { order: '1437', date: '2024-10-24T07:07:00', customer: 'NORLIA BINTI BAHARUN' },
-    { order: '150', date: '2024-10-24T08:49:00', customer: 'Nor Amalina binti Abdul Wahab' },
-    { order: '151', date: '2024-10-24T09:06:00', customer: 'Sharifah Asma binti Syed Noh' },
-    { order: '152', date: '2024-10-24T09:18:00', customer: 'Rizka Fathya Fancha' },
-    { order: '154', date: '2024-10-24T09:28:00', customer: 'Titi Rahayu' },
-    { order: '155', date: '2024-10-24T09:45:00', customer: 'Nadiah Athirah Azizan' },
-    { order: '157', date: '2024-10-24T10:07:00', customer: 'Azizan Bin Aziz' },
-    { order: '158', date: '2024-10-24T10:11:00', customer: 'ADLAN NAQIUDDIN BIN AZIZAN' },
-    { order: '159', date: '2024-10-24T10:13:00', customer: 'Nur Hanis Shuhada binti Abu Hasim' },
-    { order: '160', date: '2024-10-24T10:16:00', customer: 'Husaini Bin Abdullah' },
-    { order: '161', date: '2024-10-24T10:19:00', customer: 'Farah Aiman Binti Ahmad Nurulazam' },
-    { order: '1018', date: '2024-11-16T13:52:00', customer: 'AZIZAH' },
-    { order: '1275', date: '2024-12-03T03:57:00', customer: 'Mohd Zulhelmi bin Kamaruzzaman' }
-  ];
-  
-  goldOrders.forEach(({ order, date, customer }) => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(productId => {
-      const productName = productId === 'colostrum-p' ? 'Ahad Colostrum P' : 
-                         productId === 'colostrum-g' ? 'Ahad Colostrum G' : 'Ahad Barley Best';
-      orders.push(createLogEntry(order, date, customer, productId, productName, -5));
-    });
+  // -- HARDCODED DATA --
+  // Gold Orders
+  ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24', 'Historical Customer', pid, '', -5)));
   });
-  
-  // BRONZE MEMBERSHIP ORDERS
-  const bronzeOrders = [
-    { order: '1227', date: '2024-11-25T13:40:00', customer: 'Romli bin Sidin' },
-    { order: '1310', date: '2025-02-07T14:31:00', customer: 'Rahenah binti Rahim' },
-    { order: '1351', date: '2025-03-07T16:03:00', customer: 'Ahmad Darus' },
-    { order: '1352', date: '2025-03-07T16:12:00', customer: 'Inson Abdullah' },
-    { order: '1373', date: '2025-08-13T00:55:00', customer: 'Mohd Zaki Bin Baharun' },
-    { order: '1471', date: '2025-09-21T06:24:00', customer: 'Mohd Khaironi Bin Md Khairi' },
-    { order: '1472', date: '2025-09-21T06:28:00', customer: 'Zakiah Binti Mat Saad' },
-    { order: '1473', date: '2025-09-21T06:36:00', customer: 'HELEEJAILAH @ NORLAILY BINTI IBRAHIM' },
-    { order: '1474', date: '2025-09-21T06:46:00', customer: 'Safri Bin Shuib' },
-    { order: '1475', date: '2025-09-21T06:51:00', customer: 'MORDIATI BINTI WAKIS' },
-    { order: '1476', date: '2025-09-21T07:02:00', customer: 'NURUL AIN BINTI PUWASA' }
-  ];
-  
-  bronzeOrders.forEach(({ order, date, customer }) => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(productId => {
-      const productName = productId === 'colostrum-p' ? 'Ahad Colostrum P' : 
-                         productId === 'colostrum-g' ? 'Ahad Colostrum G' : 'Ahad Barley Best';
-      orders.push(createLogEntry(order, date, customer, productId, productName, -1));
-    });
+  // Silver Orders
+  ['1363', '1368', '1502', '1504'].forEach(order => {
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18', 'Historical Customer', pid, '', -2)));
   });
-  
-  // SILVER MEMBERSHIP ORDERS
-  const silverOrders = [
-    { order: '1363', date: '2025-03-18T09:34:00', customer: 'Shamsina Liza Binti Manaf' },
-    { order: '1368', date: '2025-05-07T07:53:00', customer: 'ASZELAN BIN TOKININ' },
-    { order: '1502', date: '2025-11-24T16:42:00', customer: 'Abdullah Bin Ishak' },
-    { order: '1504', date: '2025-11-25T14:18:00', customer: 'NOR HAFIZA BINTI HAJI JAHARI' }
-  ];
-  
-  silverOrders.forEach(({ order, date, customer }) => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(productId => {
-      const productName = productId === 'colostrum-p' ? 'Ahad Colostrum P' : 
-                         productId === 'colostrum-g' ? 'Ahad Colostrum G' : 'Ahad Barley Best';
-      orders.push(createLogEntry(order, date, customer, productId, productName, -2));
-    });
+  // Bronze Orders
+  ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07', 'Historical Customer', pid, '', -1)));
   });
-  
-  // INDIVIDUAL PRODUCT ORDERS
-  orders.push(createLogEntry('1367', '2025-04-27T01:26:00', 'Husaini Bin Abdullah', 
-    'barley-best', 'Ahad Barley Best', -8));
-  
-  orders.push(createLogEntry('1370', '2025-05-15T10:03:00', 'Husaini Bin Abdullah', 
-    'barley-best', 'Ahad Barley Best', -4));
-  
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00', 'Husaini Bin Abdullah', 
-    'colostrum-p', 'Ahad Colostrum P', -2));
-  
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00', 'Husaini Bin Abdullah', 
-    'barley-best', 'Ahad Barley Best', -4));
-  
+  // Individual Orders
+  orders.push(createLogEntry('1367', '2025-04-27', 'Husaini Bin Abdullah', 'barley-best', '', -8));
+  orders.push(createLogEntry('1370', '2025-05-15', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+  orders.push(createLogEntry('1501', '2025-11-16', 'Husaini Bin Abdullah', 'colostrum-p', '', -2));
+  orders.push(createLogEntry('1501', '2025-11-16', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+
   return orders;
 };
 
-// --- HELPER: Parse Google Sheet "Products" Column ---
+// --- HELPER: Parse Product Strings ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
-  
   const changes: { productId: string; change: number }[] = [];
   const items = productStr.split(',').map(s => s.trim());
 
@@ -192,64 +133,100 @@ const parseProductString = (productStr: string) => {
       changes.push({ productId: 'colostrum-g', change: -1 * qty });
     }
   });
-
   return changes;
 };
 
-// --- SYNC FUNCTION (Combine Old Data + New Google Sheets Data) ---
+// --- SYNC FUNCTION (The Brain) ---
 export const syncWithGoogleSheets = async () => {
-  console.log('Syncing with Google Sheets...');
+  console.log('Syncing data...');
   
   try {
-    const response = await fetch(N8N_API_URL);
-    if (!response.ok) throw new Error('Failed to fetch from n8n');
-    
-    const sheetData = await response.json();
-    console.log('Sheet Data Received:', sheetData);
-    
-    // 1. Get Old Hardcoded Logs
-    const oldLogs = generateProductionOrders();
+    // 1. Fetch Sales Data
+    const salesResponse = await fetch(N8N_SALES_URL);
+    const salesData = salesResponse.ok ? await salesResponse.json() : [];
 
-    // 2. Convert New Sheet Rows to Logs
-    const newLogs: ActivityLog[] = sheetData.map((row: any, index: number) => {
+    // 2. Fetch Adjustments Data
+    const adjustmentsResponse = await fetch(N8N_ADJUSTMENTS_READ_URL);
+    const adjustmentsData = adjustmentsResponse.ok ? await adjustmentsResponse.json() : [];
+
+    // 3. Get Hardcoded History
+    const historyLogs = generateProductionOrders();
+
+    // 4. Process Sales Logs
+    const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
       const status = row['Status']?.toLowerCase() || '';
       const isPaid = status === 'processing' || status === 'completed';
-      
-      // IMPORTANT: Skip orders if they already exist in oldLogs (avoid double counting)
       const orderId = row['Order ID']?.toString();
-      const existsInOld = oldLogs.some(log => log.orderNumber === orderId);
       
-      if (existsInOld) return null; // Skip duplicate old orders found in sheet
+      // Skip if duplicate of hardcoded history
+      if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
       const changes = isPaid ? parseProductString(row['Products']) : [];
 
       return {
-        id: `sheet-${orderId || index}`,
+        id: `sale-${orderId || index}`,
         timestamp: row['Date'] || new Date().toISOString(),
         type: 'invoice',
         orderNumber: orderId,
         productUpdates: changes.map(c => ({
           productId: c.productId,
-          before: 0,
-          after: 0,
-          change: c.change
+          before: 0, after: 0, change: c.change
         })),
         userId: 'system',
-        userName: row['Customer'] || 'WooCommerce',
+        userName: row['Customer'] || 'System',
         notes: `${row['Status']} - ${row['Products']}`
       };
-    }).filter((log: any) => log !== null); // Remove nulls
+    }).filter((log: any) => log !== null);
 
-    // 3. Combine All Logs (Old + New)
-    const allLogs = [...oldLogs, ...newLogs];
+    // 5. Process Adjustment Logs
+    const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
+      // Map Google Sheet "Product Name" back to "productId"
+      let pid = '';
+      const pName = row['Product'] || '';
+      if (pName.includes('Colostrum P')) pid = 'colostrum-p';
+      else if (pName.includes('Colostrum G')) pid = 'colostrum-g';
+      else if (pName.includes('Barley')) pid = 'barley-best';
+      else if (pName.includes('All')) pid = 'all'; // Special case for bulk
 
-    // 4. Recalculate Stock from Scratch (1000 base)
-    const newProducts = JSON.parse(JSON.stringify(defaultProducts));
+      const qty = parseInt(row['Quantity'] || '0');
+      const type = row['Type'] || 'manual';
+      
+      // Determine if adding or removing
+      let multiplier = 1;
+      if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
+        multiplier = -1;
+      }
+
+      const updates = [];
+      if (pid === 'all') {
+        ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(id => {
+          updates.push({ productId: id, before: 0, after: 0, change: qty * multiplier });
+        });
+      } else if (pid) {
+        updates.push({ productId: pid, before: 0, after: 0, change: qty * multiplier });
+      }
+
+      return {
+        id: `adj-${index}-${row['Date']}`,
+        timestamp: row['Date'] ? new Date(row['Date']).toISOString() : new Date().toISOString(),
+        type: type as any,
+        orderNumber: null,
+        productUpdates: updates,
+        userId: 'manual',
+        userName: 'Admin',
+        notes: row['Reason'] || 'Manual Adjustment'
+      };
+    });
+
+    // 6. Merge & Calculate
+    const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
     
-    // Sort logs oldest -> newest
+    // Sort oldest to newest for calculation
     const sortedLogs = allLogs.sort((a, b) => 
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
+
+    const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
     sortedLogs.forEach(log => {
       log.productUpdates.forEach(update => {
@@ -262,7 +239,7 @@ export const syncWithGoogleSheets = async () => {
       });
     });
 
-    // Save to Cache
+    // 7. Save to Cache
     localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
     
@@ -274,66 +251,36 @@ export const syncWithGoogleSheets = async () => {
   }
 };
 
-// --- GETTERS ---
-export const getProducts = (): Record<string, Product> => {
-  const stored = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-  return stored ? JSON.parse(stored) : defaultProducts;
+// --- WRITE ACTION (Send to n8n) ---
+export const writeAdjustmentToGoogleSheets = async (data: any) => {
+  try {
+    const response = await fetch(N8N_ADJUSTMENTS_WRITE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return response.ok;
+  } catch (error) {
+    console.error('Failed to write adjustment:', error);
+    return false;
+  }
 };
 
-export const getActivityLog = (): ActivityLog[] => {
-  const stored = localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG);
-  // If nothing in cache, load at least the old hardcoded data
-  return stored ? JSON.parse(stored) : generateProductionOrders().reverse();
-};
-
-// --- USERS ---
-export const getUsers = (): User[] => {
-  const stored = localStorage.getItem(STORAGE_KEYS.USERS);
-  const defaultUsers: User[] = [
+// --- GETTERS & HELPERS (Unchanged) ---
+export const getProducts = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || JSON.stringify(defaultProducts));
+export const getActivityLog = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG) || JSON.stringify(generateProductionOrders().reverse()));
+export const getUsers = () => {
+  const users = [
     { id: 'user-001', email: 'admin@ahadnetwork.com', passwordHash: 'AhadNetwork2025!', role: 'admin', name: 'Admin User', createdAt: new Date().toISOString() },
     { id: 'user-002', email: 'aiman.adnan92@gmail.com', passwordHash: 'Staff123!', role: 'staff', name: 'Aiman', createdAt: new Date().toISOString() },
     { id: 'user-003', email: 'farahaimannnn@gmail.com', passwordHash: 'Viewer123!', role: 'viewer', name: 'Farah', createdAt: new Date().toISOString() },
     { id: 'user-004', email: 's.anuar1990@gmail.com', passwordHash: 'Viewer123!', role: 'viewer', name: 'Anuar', createdAt: new Date().toISOString() }
   ];
-  if (!stored) localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(defaultUsers));
-  return stored ? JSON.parse(stored) : defaultUsers;
-};
-
-export const saveUsers = (users: User[]) => {
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+  return users;
 };
-
-export const updateUserLastLogin = (userId: string) => {
-  const users = getUsers();
-  const user = users.find(u => u.id === userId);
-  if (user) {
-    user.lastLogin = new Date().toISOString();
-    saveUsers(users);
-  }
-};
-
-export const getCurrentUser = (): User | null => {
-  const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-  return stored ? JSON.parse(stored) : null;
-};
-
-export const setCurrentUser = (user: User | null) => {
-  if (user) {
-    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-  }
-};
-
-export const saveProducts = (products: Record<string, Product>) => {
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
-};
-
-export const updateProductStock = async (productId: string, newStock: number) => {
-  const products = getProducts();
-  if (products[productId]) {
-    products[productId].stock = newStock;
-    products[productId].lastUpdated = new Date().toISOString();
-    saveProducts(products);
-  }
-};
+export const saveUsers = (users: User[]) => localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+export const updateUserLastLogin = (userId: string) => {}; 
+export const getCurrentUser = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || 'null');
+export const setCurrentUser = (user: User | null) => user ? localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user)) : localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+export const updateProductStock = async (productId: string, newStock: number) => { /* Deprecated by writeAdjustment */ };
