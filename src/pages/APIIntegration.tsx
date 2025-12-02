@@ -1,14 +1,39 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Copy, Key, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { Copy, RefreshCw, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react';
+import { processInvoice } from '@/lib/invoiceAPI';
+
+// Store API key and stats in localStorage
+const getStoredApiKey = () => {
+  const stored = localStorage.getItem('ahad-api-key');
+  if (stored) return stored;
+  const newKey = 'ahad_live_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  localStorage.setItem('ahad-api-key', newKey);
+  return newKey;
+};
+
+const getApiStats = () => {
+  const stored = localStorage.getItem('ahad-api-stats');
+  return stored ? JSON.parse(stored) : { total: 0, successful: 0, failed: 0, lastCall: null };
+};
+
+const updateApiStats = (success: boolean) => {
+  const stats = getApiStats();
+  stats.total += 1;
+  if (success) stats.successful += 1;
+  else stats.failed += 1;
+  stats.lastCall = new Date().toISOString();
+  localStorage.setItem('ahad-api-stats', JSON.stringify(stats));
+  return stats;
+};
 
 const APIIntegration = () => {
-  const [apiKey, setApiKey] = useState('ahad_live_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15));
+  const [apiKey, setApiKey] = useState(getStoredApiKey);
   const [showKey, setShowKey] = useState(false);
   const [testOrderNumber, setTestOrderNumber] = useState('');
   const [testCustomerName, setTestCustomerName] = useState('');
@@ -16,6 +41,7 @@ const APIIntegration = () => {
   const [testQuantity, setTestQuantity] = useState('1');
   const [testResponse, setTestResponse] = useState('');
   const [isTesting, setIsTesting] = useState(false);
+  const [apiStats, setApiStats] = useState(getApiStats);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -25,10 +51,11 @@ const APIIntegration = () => {
   const regenerateKey = () => {
     const newKey = 'ahad_live_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     setApiKey(newKey);
+    localStorage.setItem('ahad-api-key', newKey);
     toast.success('API key regenerated successfully');
   };
 
-  const testEndpoint = () => {
+  const testEndpoint = async () => {
     if (!testOrderNumber || !testCustomerName || !testProduct) {
       toast.error('Please fill in all test fields');
       return;
@@ -36,29 +63,46 @@ const APIIntegration = () => {
 
     setIsTesting(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      const mockResponse = {
-        success: true,
-        message: `Order #${testOrderNumber} processed successfully`,
+    try {
+      const response = await processInvoice({
         orderNumber: testOrderNumber,
-        customer: testCustomerName,
-        timestamp: new Date().toISOString(),
-        stockUpdates: [
-          {
-            product: "Ahad Colostrum P",
-            productId: "colostrum-p",
-            before: 914,
-            after: 913,
-            change: -1
-          }
-        ]
+        orderDate: new Date().toISOString(),
+        customer: {
+          name: testCustomerName,
+          email: '',
+          phone: ''
+        },
+        items: [{
+          productName: testProduct,
+          quantity: parseInt(testQuantity) || 1,
+          price: 0
+        }],
+        total: 0,
+        paymentMethod: 'Test'
+      });
+
+      setTestResponse(JSON.stringify(response, null, 2));
+      const newStats = updateApiStats(response.success);
+      setApiStats(newStats);
+
+      if (response.success) {
+        toast.success('Order processed successfully! Check Activity History.');
+      } else {
+        toast.error(response.message);
+      }
+    } catch (error: any) {
+      const errorResponse = {
+        success: false,
+        error: 'server_error',
+        message: error.message || 'An unexpected error occurred'
       };
-      
-      setTestResponse(JSON.stringify(mockResponse, null, 2));
+      setTestResponse(JSON.stringify(errorResponse, null, 2));
+      const newStats = updateApiStats(false);
+      setApiStats(newStats);
+      toast.error('Test failed: ' + error.message);
+    } finally {
       setIsTesting(false);
-      toast.success('Test request completed');
-    }, 1500);
+    }
   };
 
   return (
@@ -118,19 +162,23 @@ const APIIntegration = () => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-sm text-muted-foreground">Total Calls</p>
-                <p className="text-2xl font-bold">0</p>
+                <p className="text-2xl font-bold">{apiStats.total}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Successful</p>
-                <p className="text-2xl font-bold text-green-600">0</p>
+                <p className="text-2xl font-bold text-green-600">{apiStats.successful}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Failed</p>
-                <p className="text-2xl font-bold text-red-600">0</p>
+                <p className="text-2xl font-bold text-red-600">{apiStats.failed}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Last Call</p>
-                <p className="text-sm font-medium">Never</p>
+                <p className="text-sm font-medium">
+                  {apiStats.lastCall 
+                    ? new Date(apiStats.lastCall).toLocaleString() 
+                    : 'Never'}
+                </p>
               </div>
             </div>
           </div>
