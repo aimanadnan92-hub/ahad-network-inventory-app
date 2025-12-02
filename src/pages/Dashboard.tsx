@@ -29,11 +29,12 @@ const Dashboard = () => {
   const refreshData = async () => {
     setIsSyncing(true);
     
-    // 1. Load local immediately
+    // 1. Load local immediately (fast)
     setProducts(getProducts());
     setActivities(getActivityLog());
 
     // 2. Fetch remote from Google Sheets via n8n
+    // This is the NEW part we need to add!
     const result = await syncWithGoogleSheets();
     
     if (result) {
@@ -41,8 +42,7 @@ const Dashboard = () => {
       setActivities(result.logs);
       toast.success("Synced with Google Sheets");
     } else {
-      // If sync fails (e.g. offline), we still have local data
-      // Only show error if we have NO data at all
+      // Only show error if we have NO data at all (first load fail)
       if (Object.keys(products).length === 0) {
          toast.error("Sync failed, please check connection");
       }
@@ -168,7 +168,7 @@ const Dashboard = () => {
       {/* Package Calculator */}
       <PackageCalculator packages={PACKAGES} availableSets={availableSets} />
 
-      {/* Activity Feed - Explicitly Sorted Newest First */}
+      {/* Activity Feed */}
       <ActivityFeed 
         activities={[...activities].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())} 
         limit={10} 
