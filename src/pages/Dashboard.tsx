@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getProducts, getActivityLog } from '@/lib/storage';
+import { getProducts, getActivityLog, syncWithGoogleSheets } from '@/lib/storage';
 import { Package as PackageType } from '@/types/inventory';
 import { Button } from '@/components/ui/button';
 import ProductCard from '@/components/ProductCard';
@@ -9,6 +9,7 @@ import ActivityFeed from '@/components/ActivityFeed';
 import ManualAdjustmentModal from '@/components/ManualAdjustmentModal';
 import ExportSheetsDialog from '@/components/ExportSheetsDialog';
 import { Plus, RefreshCw, FileSpreadsheet, Package } from 'lucide-react';
+import { toast } from 'sonner';
 
 const PACKAGES: PackageType[] = [
   { type: 'bronze', name: 'Bronze Package', multiplier: 1, price: 775, icon: '🥉' },
@@ -16,23 +17,47 @@ const PACKAGES: PackageType[] = [
   { type: 'gold', name: 'Gold Package', multiplier: 5, price: 2930, icon: '🥇' },
 ];
 
-// Explicit order lists for accurate counting
+// Explicit order lists for accurate counting (Historical Data)
 const GOLD_ORDERS = ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'];
 const SILVER_ORDERS = ['1363', '1368', '1502', '1504'];
 const BRONZE_ORDERS = ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'];
 const INDIVIDUAL_ORDERS = ['1367', '1370', '1501'];
 
 const Dashboard = () => {
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user } = useAuth();
   const [products, setProducts] = useState(getProducts());
   const [activities, setActivities] = useState(getActivityLog());
   const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  const refreshData = () => {
+  // New Sync Function
+  const refreshData = async () => {
+    setIsSyncing(true);
+    
+    // 1. Load local immediately (for speed)
     setProducts(getProducts());
     setActivities(getActivityLog());
+
+    // 2. Fetch remote from Google Sheets via n8n
+    const result = await syncWithGoogleSheets();
+    
+    if (result) {
+      setProducts(result.products);
+      setActivities(result.logs);
+      toast.success("Synced with Google Sheets");
+    } else {
+      // If sync fails (e.g. offline), we still have local data
+      toast.error("Sync failed, using cached data");
+    }
+    
+    setIsSyncing(false);
   };
+
+  // Initial Load
+  useEffect(() => {
+    refreshData();
+  }, []);
 
   // Calculate stats - count unique orders only
   const uniqueOrders = [...new Set(
@@ -42,14 +67,7 @@ const Dashboard = () => {
   )];
   const totalOrders = uniqueOrders.length;
   
-  // Count orders by package type using explicit order lists
-  const ordersByPackage = {
-    gold: uniqueOrders.filter(o => GOLD_ORDERS.includes(o)).length,
-    silver: uniqueOrders.filter(o => SILVER_ORDERS.includes(o)).length,
-    bronze: uniqueOrders.filter(o => BRONZE_ORDERS.includes(o)).length,
-    individual: uniqueOrders.filter(o => INDIVIDUAL_ORDERS.includes(o)).length,
-  };
-  
+  // Calculate this month/week stats
   const thisMonth = uniqueOrders.filter(orderNum => {
     const orderActivity = activities.find(a => a.orderNumber === orderNum);
     if (!orderActivity) return false;
@@ -71,10 +89,6 @@ const Dashboard = () => {
   const totalValue = Object.values(products).reduce(
     (sum, p) => sum + (p.stock * p.retailPrice), 0
   );
-
-  useEffect(() => {
-    refreshData();
-  }, []);
 
   // Calculate available packages
   const productArray = Object.values(products);
@@ -99,27 +113,6 @@ const Dashboard = () => {
           </div>
           <div className="text-3xl font-bold">{totalOrders}</div>
           <p className="text-xs text-muted-foreground mt-1">All time</p>
-          <div className="mt-3 pt-3 border-t space-y-1">
-            <div className="text-xs text-muted-foreground">Breakdown:</div>
-            <div className="text-xs space-y-0.5">
-              <div className="flex items-center gap-1">
-                <span>🥇</span>
-                <span>Gold: {ordersByPackage.gold} orders</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span>🥈</span>
-                <span>Silver: {ordersByPackage.silver} orders</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span>🥉</span>
-                <span>Bronze: {ordersByPackage.bronze} orders</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span>📦</span>
-                <span>Individual: {ordersByPackage.individual} orders</span>
-              </div>
-            </div>
-          </div>
         </div>
         <div className="p-6 rounded-lg border bg-card">
           <div className="flex items-center justify-between mb-2">
@@ -127,7 +120,7 @@ const Dashboard = () => {
             <FileSpreadsheet className="h-5 w-5 text-primary" />
           </div>
           <div className="text-3xl font-bold">{thisMonth}</div>
-          <p className="text-xs text-muted-foreground mt-1">November 2025</p>
+          <p className="text-xs text-muted-foreground mt-1">Orders</p>
         </div>
         <div className="p-6 rounded-lg border bg-card">
           <div className="flex items-center justify-between mb-2">
@@ -135,7 +128,7 @@ const Dashboard = () => {
             <RefreshCw className="h-5 w-5 text-primary" />
           </div>
           <div className="text-3xl font-bold">{thisWeek}</div>
-          <p className="text-xs text-muted-foreground mt-1">Last 7 days</p>
+          <p className="text-xs text-muted-foreground mt-1">Orders</p>
         </div>
         <div className="p-6 rounded-lg border bg-card">
           <div className="flex items-center justify-between mb-2">
@@ -143,7 +136,7 @@ const Dashboard = () => {
             <Plus className="h-5 w-5 text-primary" />
           </div>
           <div className="text-3xl font-bold">RM {totalValue.toLocaleString()}</div>
-          <p className="text-xs text-muted-foreground mt-1">Current retail value</p>
+          <p className="text-xs text-muted-foreground mt-1">Retail Value</p>
         </div>
       </div>
 
@@ -155,13 +148,13 @@ const Dashboard = () => {
             Manual Adjustment
           </Button>
         )}
-        <Button variant="outline" onClick={refreshData} className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Refresh
+        <Button variant="outline" onClick={refreshData} disabled={isSyncing} className="gap-2">
+          <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+          {isSyncing ? 'Syncing...' : 'Sync with Sheet'}
         </Button>
         <Button variant="outline" onClick={() => setIsExportDialogOpen(true)} className="gap-2">
           <FileSpreadsheet className="h-4 w-4" />
-          Export to Sheets
+          Export
         </Button>
       </div>
 
@@ -178,22 +171,23 @@ const Dashboard = () => {
       {/* Package Calculator */}
       <PackageCalculator packages={PACKAGES} availableSets={availableSets} />
 
-      {/* Activity Feed - Sort by newest first */}
+      {/* Activity Feed */}
       <ActivityFeed 
-        activities={[...activities].sort((a, b) => 
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-        )} 
+        activities={activities} 
         limit={10} 
       />
 
-      {/* Manual Adjustment Modal */}
+      {/* Modals */}
       <ManualAdjustmentModal
         open={isAdjustmentModalOpen}
         onOpenChange={setIsAdjustmentModalOpen}
-        onSuccess={refreshData}
+        onSuccess={() => {
+          // Re-fetch to include manual adjustment
+          setProducts(getProducts());
+          setActivities(getActivityLog());
+        }}
       />
 
-      {/* Export Dialog */}
       <ExportSheetsDialog
         open={isExportDialogOpen}
         onOpenChange={setIsExportDialogOpen}
