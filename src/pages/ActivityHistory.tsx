@@ -164,29 +164,32 @@ const ActivityHistory = () => {
 
           <div className="space-y-2">
             <Label className="text-sm font-medium">Date Range</Label>
-            <div className="grid gap-4 md:grid-cols-5">
-              <div className="space-y-1">
-                <Label htmlFor="dateFrom" className="text-xs text-muted-foreground">From</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="dateFrom" className="text-xs text-muted-foreground whitespace-nowrap">From:</Label>
                 <Input
                   id="dateFrom"
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
                   max={new Date().toISOString().split('T')[0]}
+                  className="h-10 w-auto"
                 />
               </div>
-              <div className="space-y-1">
-                <Label htmlFor="dateTo" className="text-xs text-muted-foreground">To</Label>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="dateTo" className="text-xs text-muted-foreground whitespace-nowrap">To:</Label>
                 <Input
                   id="dateTo"
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
                   max={new Date().toISOString().split('T')[0]}
+                  className="h-10 w-auto"
                 />
               </div>
               <Button
                 variant="outline"
+                className="h-10"
                 onClick={() => {
                   const today = new Date().toISOString().split('T')[0];
                   setDateFrom(today);
@@ -197,6 +200,7 @@ const ActivityHistory = () => {
               </Button>
               <Button
                 variant="outline"
+                className="h-10"
                 onClick={() => {
                   const today = new Date();
                   const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -208,6 +212,7 @@ const ActivityHistory = () => {
               </Button>
               <Button
                 variant="outline"
+                className="h-10"
                 onClick={() => {
                   setSearchQuery('');
                   setTypeFilter('all');
