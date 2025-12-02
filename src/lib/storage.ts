@@ -218,6 +218,7 @@ export const addActivityLog = (log: Omit<ActivityLog, 'id' | 'timestamp'>) => {
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(logs));
   return newLog;
 };
+// Users
 export const getUsers = (): User[] => {
   // We removed the 'if (stored)' check to FORCE these users to load on every device
   
@@ -262,8 +263,6 @@ export const getUsers = (): User[] => {
   
   // Save to storage so the app can use them
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(defaultUsers));
-  return defaultUsers;
-};
   return defaultUsers;
 };
 
