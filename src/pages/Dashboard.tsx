@@ -16,6 +16,12 @@ const PACKAGES: PackageType[] = [
   { type: 'gold', name: 'Gold Package', multiplier: 5, price: 2930, icon: '🥇' },
 ];
 
+// Explicit order lists for accurate counting
+const GOLD_ORDERS = ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'];
+const SILVER_ORDERS = ['1363', '1368', '1502', '1504'];
+const BRONZE_ORDERS = ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'];
+const INDIVIDUAL_ORDERS = ['1367', '1370', '1501'];
+
 const Dashboard = () => {
   const { user, logout, isAuthenticated } = useAuth();
   const [products, setProducts] = useState(getProducts());
@@ -36,22 +42,13 @@ const Dashboard = () => {
   )];
   const totalOrders = uniqueOrders.length;
   
-  // Count orders by package type
-  const ordersByPackage = uniqueOrders.reduce((acc, orderNum) => {
-    const orderActivities = activities.filter(a => a.orderNumber === orderNum);
-    if (orderActivities.length === 0) return acc;
-    
-    // Check quantity deducted to determine package type
-    const firstActivity = orderActivities[0];
-    const change = Math.abs(firstActivity.productUpdates[0]?.change || 0);
-    
-    if (change === 5) acc.gold++;
-    else if (change === 2) acc.silver++;
-    else if (change === 1 && orderActivities.length === 3) acc.bronze++;
-    else acc.individual++;
-    
-    return acc;
-  }, { gold: 0, silver: 0, bronze: 0, individual: 0 });
+  // Count orders by package type using explicit order lists
+  const ordersByPackage = {
+    gold: uniqueOrders.filter(o => GOLD_ORDERS.includes(o)).length,
+    silver: uniqueOrders.filter(o => SILVER_ORDERS.includes(o)).length,
+    bronze: uniqueOrders.filter(o => BRONZE_ORDERS.includes(o)).length,
+    individual: uniqueOrders.filter(o => INDIVIDUAL_ORDERS.includes(o)).length,
+  };
   
   const thisMonth = uniqueOrders.filter(orderNum => {
     const orderActivity = activities.find(a => a.orderNumber === orderNum);
