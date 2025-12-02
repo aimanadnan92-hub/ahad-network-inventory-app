@@ -86,11 +86,9 @@ const Login = () => {
               {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
           </form>
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            <p>Default credentials:</p>
-            <p className="font-mono text-xs mt-1">admin@ahadnetwork.com</p>
-            <p className="font-mono text-xs">AhadNetwork2025!</p>
-          </div>
+          <p className="mt-6 text-center text-sm text-muted-foreground">
+            Authorized personnel only
+          </p>
         </CardContent>
       </Card>
     </div>
