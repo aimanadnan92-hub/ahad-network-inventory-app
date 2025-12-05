@@ -325,7 +325,7 @@ export const syncWithGoogleSheets = async () => {
 // --- WRITE ACTION ---
 export const writeAdjustmentToGoogleSheets = async (data: any) => {
   try {
-    const response = await fetch(N8N_ADJUSTMENTS_WRITE_URL, {
+    const response = await fetch(https://n8n.ahader.cloud/webhook/post-adjustment, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
