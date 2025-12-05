@@ -57,43 +57,50 @@ const safeDate = (dateStr: string | undefined): number => {
   if (!dateStr) return 0;
   let timestamp = new Date(dateStr).getTime();
   if (isNaN(timestamp)) {
-    // Handle "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DD" often returned by Sheets
+    // Handle "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DD"
     timestamp = new Date(dateStr.replace(' ', 'T')).getTime();
   }
   return isNaN(timestamp) ? 0 : timestamp;
 };
 
-// --- HELPER: Normalize Row Keys (The Fix for "Missing" Data) ---
-// This flattens n8n data (removes .json wrapper) and makes keys lowercase for easy lookup
+// --- HELPER: Normalize Row Keys (Fixes "Missing" Data) ---
 const normalizeRow = (row: any) => {
   if (!row) return {};
-  // If n8n wraps data in a 'json' property, unwrap it
-  const data = row.json ? row.json : row;
   
-  // Create a new object with lowercase keys (e.g. 'Product' -> 'product')
+  // Unwrap common n8n structures
+  let data = row;
+  if (row.json) data = row.json;
+  else if (row.data) data = row.data;
+  
   const normalized: Record<string, any> = {};
+  
+  // Convert all keys to lowercase for safe lookup
   Object.keys(data).forEach(key => {
-    normalized[key.toLowerCase()] = data[key];
+    if (data[key] !== undefined && data[key] !== null) {
+      normalized[key.toLowerCase()] = data[key];
+    }
   });
+  
   return normalized;
 };
 
-// --- HELPER: Safe Fetch with Timeout ---
+// --- HELPER: Safe Fetch with Increased Timeout ---
 const fetchSafe = async (url: string) => {
   try {
     console.log(`Fetching: ${url}`);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+    // Increased timeout to 15 seconds to handle n8n cold starts
+    const timeoutId = setTimeout(() => controller.abort(), 15000); 
 
     const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (response.ok) {
       const json = await response.json();
-      // Ensure we always return an array
+      console.log(`Data received from ${url}:`, json);
       return Array.isArray(json) ? json : []; 
     }
-    console.warn(`API Error ${url}: ${response.statusText}`);
+    console.warn(`API Error ${url}: ${response.status} ${response.statusText}`);
     return [];
   } catch (error) {
     console.warn(`Network Error/Timeout: ${url}`, error);
@@ -128,7 +135,7 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // --- HARDCODED HISTORICAL DATA ---
+  // Hardcoded Orders
   ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => 
     orders.push(createLogEntry('1504', '2025-11-28T10:00:00Z', 'Naurawm GS/Riziman', pid, -2))
   );
@@ -140,7 +147,7 @@ const generateProductionOrders = (): ActivityLog[] => {
   orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
   orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -8));
 
-  // Legacy Orders
+  // Legacy
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, -5)));
   });
@@ -201,12 +208,11 @@ export const syncWithGoogleSheets = async () => {
 
   // --- SALES PROCESSING ---
   const salesLogs: ActivityLog[] = validSalesData.map((rawRow: any, index: number) => {
-    const row = normalizeRow(rawRow); // NORMALIZE
+    const row = normalizeRow(rawRow);
     if (!row.status) return null;
 
-    const status = row.status?.toLowerCase() || '';
+    const status = String(row.status).toLowerCase();
     const isPaid = status === 'processing' || status === 'completed';
-    // Handle 'Order ID' vs 'order id' (normalizeRow handles basic keys, but 'Order ID' has a space)
     const orderId = (rawRow['Order ID'] || row['order id'] || row.id)?.toString();
     
     if (historyLogs.some(log => log.orderNumber === orderId)) return null;
@@ -229,14 +235,15 @@ export const syncWithGoogleSheets = async () => {
     };
   }).filter((log: any) => log !== null);
 
-  // --- ADJUSTMENTS PROCESSING (FIXED) ---
+  // --- ADJUSTMENTS PROCESSING ---
   const adjustmentLogs: ActivityLog[] = validAdjustmentsData.map((rawRow: any, index: number) => {
-    const row = normalizeRow(rawRow); // NORMALIZE: Converts 'Product' to 'product', unwraps .json
+    const row = normalizeRow(rawRow); // This makes all keys lowercase (product, quantity, type)
     
+    // Check if essential data exists
     if (!row.product && !row.type) return null;
 
-    const pName = (row.product || '').toLowerCase();
-    const type = (row.type || 'manual').toLowerCase();
+    const pName = String(row.product || '').toLowerCase();
+    const type = String(row.type || 'manual').toLowerCase();
     const qty = parseInt(row.quantity || '0');
     const rowDate = row.date;
     const rowReason = row.reason || 'Manual Adjustment';
@@ -265,7 +272,7 @@ export const syncWithGoogleSheets = async () => {
     if (updates.length === 0) return null;
 
     return {
-      id: `adj-${index}-${Date.now()}`, // Unique ID
+      id: `adj-${index}-${Date.now()}`,
       timestamp: rowDate ? rowDate : new Date().toISOString(),
       type: type as any,
       orderNumber: null,
@@ -276,14 +283,15 @@ export const syncWithGoogleSheets = async () => {
     };
   }).filter((log: any) => log !== null);
 
-  // MERGE & SORT
+  // MERGE
   const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
   
+  // SORT (Oldest First for Calculation)
   const sortedLogs = allLogs.sort((a, b) => 
     safeDate(a.timestamp) - safeDate(b.timestamp)
   );
 
-  // CALCULATE RUNNING TOTAL
+  // CALCULATE
   const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
   sortedLogs.forEach(log => {
