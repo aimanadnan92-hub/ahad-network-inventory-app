@@ -104,13 +104,14 @@ const fetchSafe = async (url: string) => {
     if (response.ok) {
       const json = await response.json();
       console.log(`Data received from ${url}:`, json);
-      return Array.isArray(json) ? json : []; 
+      // Return the data as-is (let the caller handle array vs object)
+      return json; 
     }
     console.warn(`API Error ${url}: ${response.status} ${response.statusText}`);
-    return [];
+    return null;
   } catch (error) {
     console.warn(`Network Error/Timeout: ${url}`, error);
-    return [];
+    return null;
   }
 };
 
@@ -211,11 +212,16 @@ export const syncWithGoogleSheets = async () => {
   const salesData = await fetchSafe(N8N_SALES_URL);
   const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
-  const validSalesData = Array.isArray(salesData) ? salesData : [];
-  const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : [];
+  // Handle both array and single object responses
+  const validSalesData = Array.isArray(salesData) ? salesData : (salesData ? [salesData] : []);
+  const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : (adjustmentsData ? [adjustmentsData] : []);
 
   console.log(`Received ${validSalesData.length} sales records`);
   console.log(`Received ${validAdjustmentsData.length} adjustment records`);
+  
+  if (validAdjustmentsData.length > 0) {
+    console.log('First adjustment record:', validAdjustmentsData[0]);
+  }
 
   // --- SALES PROCESSING ---
   const salesLogs: ActivityLog[] = validSalesData.map((rawRow: any, index: number) => {
