@@ -203,14 +203,19 @@ const parseProductString = (productStr: string) => {
 
 // --- SYNC FUNCTION ---
 export const syncWithGoogleSheets = async () => {
-  console.log('Syncing data...');
+  console.log('=== Starting Sync with Google Sheets ===');
   
   const historyLogs = generateProductionOrders();
+  console.log(`Generated ${historyLogs.length} hardcoded history logs`);
+  
   const salesData = await fetchSafe(N8N_SALES_URL);
   const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
   const validSalesData = Array.isArray(salesData) ? salesData : [];
   const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : [];
+
+  console.log(`Received ${validSalesData.length} sales records`);
+  console.log(`Received ${validAdjustmentsData.length} adjustment records`);
 
   // --- SALES PROCESSING ---
   const salesLogs: ActivityLog[] = validSalesData.map((rawRow: any, index: number) => {
@@ -247,27 +252,63 @@ export const syncWithGoogleSheets = async () => {
     const row = normalizeRow(rawRow); 
     
     // Debug: Log the found row to console so user can check
-    // console.log('Adj Row:', row);
+    console.log('Processing Adjustment Row:', row);
 
-    if (!row.product && !row.type) return null;
+    // Check for both 'product' and 'products' keys (case insensitive)
+    const productField = row.product || row.products || '';
+    const typeField = row.type || '';
+    
+    if (!productField && !typeField) {
+      console.log('Skipping row - no product or type found');
+      return null;
+    }
 
-    const pName = String(row.product || '').toLowerCase();
-    const type = String(row.type || 'manual').toLowerCase();
+    const pName = String(productField).toLowerCase();
+    const type = String(typeField).toLowerCase();
     const qty = parseInt(row.quantity || '0');
-    const rowDate = row.date;
+    
+    if (qty === 0) {
+      console.log('Skipping row - quantity is 0');
+      return null;
+    }
+
+    // Handle date parsing more robustly
+    let rowDate = new Date().toISOString();
+    if (row.date) {
+      try {
+        const parsedDate = new Date(row.date);
+        if (!isNaN(parsedDate.getTime())) {
+          rowDate = parsedDate.toISOString();
+        }
+      } catch (e) {
+        console.log('Date parsing error:', e);
+      }
+    }
+    
     const rowReason = row.reason || 'Manual Adjustment';
 
     let pid = '';
     
-    if (pName.includes('colostrum p')) pid = 'colostrum-p';
-    else if (pName.includes('colostrum g')) pid = 'colostrum-g';
-    else if (pName.includes('barley')) pid = 'barley-best';
-    else if (pName.includes('all')) pid = 'all'; 
+    // More comprehensive product matching
+    if (pName.includes('all product')) pid = 'all';
+    else if (pName.includes('colostrum p') || pName.includes('ahad colostrum p')) pid = 'colostrum-p';
+    else if (pName.includes('colostrum g') || pName.includes('ahad colostrum g')) pid = 'colostrum-g';
+    else if (pName.includes('barley') || pName.includes('ahad barley')) pid = 'barley-best';
+
+    if (!pid) {
+      console.log('Could not match product:', pName);
+      return null;
+    }
 
     let multiplier = 1;
-    // Check for negative types
-    if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].some(t => type.includes(t))) {
+    // Check for negative types - be more explicit
+    const negativeTypes = ['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'];
+    if (negativeTypes.some(t => type.includes(t))) {
       multiplier = -1;
+    }
+    // Explicit check for 'add' to ensure positive
+    if (type.includes('add')) {
+      multiplier = 1;
     }
 
     const updates = [];
@@ -275,15 +316,15 @@ export const syncWithGoogleSheets = async () => {
       ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(id => {
         updates.push({ productId: id, before: 0, after: 0, change: qty * multiplier });
       });
-    } else if (pid) {
+    } else {
       updates.push({ productId: pid, before: 0, after: 0, change: qty * multiplier });
     }
 
-    if (updates.length === 0) return null;
+    console.log('Created adjustment log:', { pid, qty, multiplier, type, updates });
 
     return {
-      id: `adj-${index}-${Date.now()}`,
-      timestamp: rowDate ? rowDate : new Date().toISOString(),
+      id: `adj-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: rowDate,
       type: type.includes('sample') ? 'sample-demo' : (type as any),
       orderNumber: null,
       productUpdates: updates,
@@ -295,6 +336,11 @@ export const syncWithGoogleSheets = async () => {
 
   // MERGE
   const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
+  
+  console.log(`Total logs after merge: ${allLogs.length}`);
+  console.log(`  - History: ${historyLogs.length}`);
+  console.log(`  - Sales: ${salesLogs.length}`);
+  console.log(`  - Adjustments: ${adjustmentLogs.length}`);
   
   // SORT (Oldest First for Calculation)
   const sortedLogs = allLogs.sort((a, b) => 
@@ -319,22 +365,31 @@ export const syncWithGoogleSheets = async () => {
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
   
+  console.log('=== Sync Complete ===');
+  console.log('Final stock levels:', Object.entries(newProducts).map(([id, p]: [string, any]) => 
+    `${p.name}: ${p.stock}`
+  ).join(', '));
+  
   return { products: newProducts, logs: sortedLogs };
 };
 
 // --- WRITE ACTION ---
 export const writeAdjustmentToGoogleSheets = async (data: any) => {
   try {
-    const response = await fetch(N8N_ADJUSTMENTS_WRITE_URL), {
+    console.log('Writing adjustment to Google Sheets:', data);
+    const response = await fetch(N8N_ADJUSTMENTS_WRITE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
     
     if (!response.ok) {
-        console.error(`Write failed: ${response.status} ${response.statusText}`);
+      console.error(`Write failed: ${response.status} ${response.statusText}`);
+      return false;
     }
-    return response.ok;
+    
+    console.log('Successfully wrote adjustment to Google Sheets');
+    return true;
   } catch (error) {
     console.error('Failed to write adjustment:', error);
     return false;
