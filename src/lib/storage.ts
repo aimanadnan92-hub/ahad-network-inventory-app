@@ -63,17 +63,22 @@ const safeDate = (dateStr: string | undefined): number => {
   return isNaN(timestamp) ? 0 : timestamp;
 };
 
-// --- HELPER: Safe Fetch to prevent app crash if API is down ---
+// --- HELPER: Safe Fetch with Timeout (Fixes Sync Stuck) ---
 const fetchSafe = async (url: string) => {
   try {
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (response.ok) {
       return await response.json();
     }
     console.warn(`API Error ${url}: ${response.statusText}`);
     return [];
   } catch (error) {
-    console.warn(`Network Error connecting to ${url}`, error);
+    console.warn(`Network Error or Timeout connecting to ${url}`, error);
     return []; // Return empty array so hardcoded data still processes
   }
 };
@@ -105,26 +110,43 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // Hardcoded Gold Orders (-5 each)
+  // --- HARDCODED HISTORICAL DATA ---
+
+  // 1. Order #1504 (Silver) - Naurawm GS/Riziman
+  ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => 
+    orders.push(createLogEntry('1504', '2025-11-28T10:00:00Z', 'Naurawm GS/Riziman', pid, -2))
+  );
+
+  // 2. Order #1502 (Silver) - Abdullah Ishak
+  ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => 
+    orders.push(createLogEntry('1502', '2025-11-20T10:00:00Z', 'Abdullah Ishak', pid, -2))
+  );
+
+  // 3. Order #1501 - Husaini Bin Abdullah
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'colostrum-p', -2));
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
+
+  // 4. Order #1370 - Husaini Bin Abdullah
+  orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
+
+  // 5. Order #1367 - Husaini Bin Abdullah
+  orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -8));
+
+  // 6. Other Historical Orders (Generic "Historical Customer")
+  // Gold Orders (-5 each)
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, -5)));
   });
   
-  // Hardcoded Silver Orders (-2 each)
-  ['1363', '1368', '1502', '1504'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18T10:00:00Z', 'Historical Customer', pid, -2)));
+  // Silver Orders (-2 each)
+  ['1363', '1368'].forEach(order => {
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-01-18T10:00:00Z', 'Historical Customer', pid, -2)));
   });
   
-  // Hardcoded Bronze Orders (-1 each)
+  // Bronze Orders (-1 each)
   ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T10:00:00Z', 'Historical Customer', pid, -1)));
   });
-  
-  // Hardcoded Individual Orders
-  orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -8));
-  orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'colostrum-p', -2));
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
 
   return orders;
 };
@@ -136,6 +158,7 @@ const parseProductString = (productStr: string) => {
   const items = productStr.split(',').map(s => s.trim());
 
   items.forEach(item => {
+    // Look for quantity like "Product Name (x2)"
     const qtyMatch = item.match(/\(x(\d+)\)/);
     const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
     const name = item.toLowerCase();
@@ -163,19 +186,19 @@ const parseProductString = (productStr: string) => {
   return changes;
 };
 
-// --- SYNC FUNCTION (The Brain) ---
+// --- SYNC FUNCTION ---
 export const syncWithGoogleSheets = async () => {
   console.log('Syncing data...');
   
   // 1. Get Hardcoded History (Always available)
   const historyLogs = generateProductionOrders();
 
-  // 2. Fetch Remote Data (Safely)
-  // We use fetchSafe so if API fails, we still get an empty array and code proceeds
+  // 2. Fetch Remote Data (Safely with Timeout)
+  // We use fetchSafe so if API fails or times out, we continue with empty arrays
   const salesData = await fetchSafe(N8N_SALES_URL);
   const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
-  // 3. Process Sales Logs (From Sheet1)
+  // 3. Process Sales Logs (From Sheet1 - Currently Empty)
   const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
     const status = row['Status']?.toLowerCase() || '';
     const isPaid = status === 'processing' || status === 'completed';
@@ -202,7 +225,7 @@ export const syncWithGoogleSheets = async () => {
     };
   }).filter((log: any) => log !== null);
 
-  // 4. Process Adjustment Logs (From Adjustments Tab)
+  // 4. Process Adjustment Logs (From Adjustments Tab - Currently Empty)
   const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
     let pid = '';
     const pName = (row['Product'] || '').toLowerCase();
@@ -244,15 +267,14 @@ export const syncWithGoogleSheets = async () => {
   }).filter((log: any) => log !== null);
 
   // 5. MERGE & SORT
-  // Order: Hardcoded + Sales + Adjustments
   const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
   
+  // Sort by date (Oldest first for calculation)
   const sortedLogs = allLogs.sort((a, b) => 
     safeDate(a.timestamp) - safeDate(b.timestamp)
   );
 
   // 6. CALCULATE RUNNING TOTAL
-  // Reset to default (1000) before calculating
   const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
   sortedLogs.forEach(log => {
@@ -267,14 +289,14 @@ export const syncWithGoogleSheets = async () => {
   });
 
   // 7. SAVE
-  // Reverse logs so Newest is at top for UI Display
+  // Reverse logs so Newest is at top for UI
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
   
   return { products: newProducts, logs: sortedLogs };
 };
 
-// --- WRITE ACTION (Send to n8n) ---
+// --- WRITE ACTION ---
 export const writeAdjustmentToGoogleSheets = async (data: any) => {
   try {
     const response = await fetch(N8N_ADJUSTMENTS_WRITE_URL, {
@@ -309,4 +331,4 @@ export const saveUsers = (users: User[]) => localStorage.setItem(STORAGE_KEYS.US
 export const updateUserLastLogin = (userId: string) => {}; 
 export const getCurrentUser = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || 'null');
 export const setCurrentUser = (user: User | null) => user ? localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user)) : localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-export const updateProductStock = async (productId: string, newStock: number) => { /* Deprecated by writeAdjustment */ };
+export const updateProductStock = async (productId: string, newStock: number) => { /* Deprecated */ };
