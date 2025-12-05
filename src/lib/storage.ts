@@ -212,6 +212,10 @@ export const syncWithGoogleSheets = async () => {
   const salesData = await fetchSafe(N8N_SALES_URL);
   const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
+  console.log('RAW adjustmentsData type:', typeof adjustmentsData);
+  console.log('RAW adjustmentsData is Array?:', Array.isArray(adjustmentsData));
+  console.log('RAW adjustmentsData:', adjustmentsData);
+
   // Handle both array and single object responses
   const validSalesData = Array.isArray(salesData) ? salesData : (salesData ? [salesData] : []);
   const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : (adjustmentsData ? [adjustmentsData] : []);
@@ -220,7 +224,10 @@ export const syncWithGoogleSheets = async () => {
   console.log(`Received ${validAdjustmentsData.length} adjustment records`);
   
   if (validAdjustmentsData.length > 0) {
-    console.log('First adjustment record:', validAdjustmentsData[0]);
+    console.log('All adjustment records:', validAdjustmentsData);
+    validAdjustmentsData.forEach((record, idx) => {
+      console.log(`Adjustment ${idx + 1}:`, record);
+    });
   }
 
   // --- SALES PROCESSING ---
@@ -367,8 +374,9 @@ export const syncWithGoogleSheets = async () => {
     });
   });
 
-  // SAVE
-  localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
+  // SAVE (reverse for display - newest first)
+  const reversedLogs = [...sortedLogs].reverse();
+  localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(reversedLogs)); 
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
   
   console.log('=== Sync Complete ===');
@@ -376,7 +384,7 @@ export const syncWithGoogleSheets = async () => {
     `${p.name}: ${p.stock}`
   ).join(', '));
   
-  return { products: newProducts, logs: sortedLogs };
+  return { products: newProducts, logs: reversedLogs };
 };
 
 // --- WRITE ACTION ---
