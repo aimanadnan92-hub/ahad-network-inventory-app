@@ -53,6 +53,8 @@ const defaultProducts: Record<string, Product> = {
 };
 
 // --- HELPER: Generate Hardcoded History ---
+// These are your PRE-Google Sheet orders. 
+// IMPORTANT: Ensure these Order IDs do NOT exist in your Google Sheet rows, or they will be skipped.
 const generateProductionOrders = (): ActivityLog[] => {
   const orders: ActivityLog[] = [];
   let activityCounter = 1;
@@ -80,29 +82,28 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // -- HARDCODED DATA --
   // Gold Orders
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24', 'Historical Customer', pid, '', -5)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T00:00:00Z', 'Historical Customer', pid, '', -5)));
   });
   // Silver Orders
   ['1363', '1368', '1502', '1504'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18', 'Historical Customer', pid, '', -2)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18T00:00:00Z', 'Historical Customer', pid, '', -2)));
   });
   // Bronze Orders
   ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07', 'Historical Customer', pid, '', -1)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T00:00:00Z', 'Historical Customer', pid, '', -1)));
   });
   // Individual Orders
-  orders.push(createLogEntry('1367', '2025-04-27', 'Husaini Bin Abdullah', 'barley-best', '', -8));
-  orders.push(createLogEntry('1370', '2025-05-15', 'Husaini Bin Abdullah', 'barley-best', '', -4));
-  orders.push(createLogEntry('1501', '2025-11-16', 'Husaini Bin Abdullah', 'colostrum-p', '', -2));
-  orders.push(createLogEntry('1501', '2025-11-16', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+  orders.push(createLogEntry('1367', '2025-04-27T00:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -8));
+  orders.push(createLogEntry('1370', '2025-05-15T00:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+  orders.push(createLogEntry('1501', '2025-11-16T00:00:00Z', 'Husaini Bin Abdullah', 'colostrum-p', '', -2));
+  orders.push(createLogEntry('1501', '2025-11-16T00:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
 
   return orders;
 };
 
-// --- HELPER: Parse Product Strings ---
+// --- HELPER: Parse Product Strings (Robust Matching) ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
   const changes: { productId: string; change: number }[] = [];
@@ -152,13 +153,13 @@ export const syncWithGoogleSheets = async () => {
     // 3. Get Hardcoded History
     const historyLogs = generateProductionOrders();
 
-    // 4. Process Sales Logs
+    // 4. Process Sales Logs (From Sheet1)
     const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
       const status = row['Status']?.toLowerCase() || '';
       const isPaid = status === 'processing' || status === 'completed';
       const orderId = row['Order ID']?.toString();
       
-      // Skip if duplicate of hardcoded history
+      // Skip duplicate orders that are already hardcoded
       if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
       const changes = isPaid ? parseProductString(row['Products']) : [];
@@ -178,20 +179,20 @@ export const syncWithGoogleSheets = async () => {
       };
     }).filter((log: any) => log !== null);
 
-    // 5. Process Adjustment Logs
+    // 5. Process Manual Adjustment Logs (From Adjustments Tab)
     const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
-      // Map Google Sheet "Product Name" back to "productId"
       let pid = '';
-      const pName = row['Product'] || '';
-      if (pName.includes('Colostrum P')) pid = 'colostrum-p';
-      else if (pName.includes('Colostrum G')) pid = 'colostrum-g';
-      else if (pName.includes('Barley')) pid = 'barley-best';
-      else if (pName.includes('All')) pid = 'all'; // Special case for bulk
+      const pName = (row['Product'] || '').toLowerCase();
+      
+      // Improved matching for Manual Adjustments
+      if (pName.includes('colostrum p')) pid = 'colostrum-p';
+      else if (pName.includes('colostrum g')) pid = 'colostrum-g';
+      else if (pName.includes('barley')) pid = 'barley-best';
+      else if (pName.includes('all')) pid = 'all'; 
 
       const qty = parseInt(row['Quantity'] || '0');
       const type = row['Type'] || 'manual';
       
-      // Determine if adding or removing
       let multiplier = 1;
       if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
         multiplier = -1;
@@ -207,7 +208,7 @@ export const syncWithGoogleSheets = async () => {
       }
 
       return {
-        id: `adj-${index}-${row['Date']}`,
+        id: `adj-${index}`,
         timestamp: row['Date'] ? new Date(row['Date']).toISOString() : new Date().toISOString(),
         type: type as any,
         orderNumber: null,
@@ -218,32 +219,43 @@ export const syncWithGoogleSheets = async () => {
       };
     });
 
-    // 6. Merge & Calculate
+    // 6. MERGE & SORT (Crucial Step for correct history)
+    // We combine everything into one big timeline
     const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
     
-    // Sort oldest to newest for calculation
+    // Sort strictly by Date (Oldest first) so calculations flow forward correctly
     const sortedLogs = allLogs.sort((a, b) => 
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
+    // 7. CALCULATE RUNNING TOTAL
+    // Start from 1000 and apply changes chronologically
     const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
     sortedLogs.forEach(log => {
       log.productUpdates.forEach(update => {
         if (newProducts[update.productId]) {
+          // Record "Stock Before" for this log
           update.before = newProducts[update.productId].stock;
+          
+          // Apply Change
           newProducts[update.productId].stock += update.change;
+          
+          // Record "Stock After" for this log
           update.after = newProducts[update.productId].stock;
+          
+          // Update "Last Modified" date on product
           newProducts[update.productId].lastUpdated = log.timestamp;
         }
       });
     });
 
-    // 7. Save to Cache
+    // 8. SAVE (Reverse logs so Newest is at top for UI)
     localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
     
-    return { products: newProducts, logs: sortedLogs.reverse() };
+    console.log('Final Products State:', newProducts);
+    return { products: newProducts, logs: sortedLogs }; // Logs are already reversed above
 
   } catch (error) {
     console.error('Sync Error:', error);
@@ -266,9 +278,19 @@ export const writeAdjustmentToGoogleSheets = async (data: any) => {
   }
 };
 
-// --- GETTERS & HELPERS (Unchanged) ---
+// --- GETTERS & HELPERS ---
 export const getProducts = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || JSON.stringify(defaultProducts));
-export const getActivityLog = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG) || JSON.stringify(generateProductionOrders().reverse()));
+
+// Ensure we always return an array, even if cache is empty/corrupt
+export const getActivityLog = () => {
+  const stored = localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG);
+  try {
+    return stored ? JSON.parse(stored) : [];
+  } catch (e) {
+    return [];
+  }
+};
+
 export const getUsers = () => {
   const users = [
     { id: 'user-001', email: 'admin@ahadnetwork.com', passwordHash: 'AhadNetwork2025!', role: 'admin', name: 'Admin User', createdAt: new Date().toISOString() },
