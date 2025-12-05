@@ -29,26 +29,26 @@ const Dashboard = () => {
   const refreshData = async () => {
     setIsSyncing(true);
     
-    // 1. Load local immediately (fast)
-    setProducts(getProducts());
-    setActivities(getActivityLog());
+    try {
+      // 1. Load local immediately (fast)
+      setProducts(getProducts());
+      setActivities(getActivityLog());
 
-    // 2. Fetch remote from Google Sheets via n8n
-    // This is the NEW part we need to add!
-    const result = await syncWithGoogleSheets();
-    
-    if (result) {
-      setProducts(result.products);
-      setActivities(result.logs);
-      toast.success("Synced with Google Sheets");
-    } else {
-      // Only show error if we have NO data at all (first load fail)
-      if (Object.keys(products).length === 0) {
-         toast.error("Sync failed, please check connection");
+      // 2. Fetch remote from Google Sheets via n8n
+      const result = await syncWithGoogleSheets();
+      
+      if (result) {
+        setProducts(result.products);
+        setActivities(result.logs);
+        toast.success("Synced with Google Sheets");
       }
+    } catch (error) {
+      console.error("Sync failed:", error);
+      toast.error("Sync encountered an issue");
+    } finally {
+      // 3. THIS ENSURES THE SPINNER STOPS NO MATTER WHAT
+      setIsSyncing(false);
     }
-    
-    setIsSyncing(false);
   };
 
   // Initial Load
@@ -180,8 +180,7 @@ const Dashboard = () => {
         onOpenChange={setIsAdjustmentModalOpen}
         onSuccess={() => {
           // Re-fetch to include manual adjustment
-          setProducts(getProducts());
-          setActivities(getActivityLog());
+          refreshData();
         }}
       />
 
