@@ -67,7 +67,7 @@ const safeDate = (dateStr: string | undefined): number => {
 const normalizeRow = (row: any) => {
   if (!row) return {};
   
-  // Unwrap common n8n structures
+  // Unwrap common n8n structures (json, data, or raw)
   let data = row;
   if (row.json) data = row.json;
   else if (row.data) data = row.data;
@@ -75,24 +75,30 @@ const normalizeRow = (row: any) => {
   const normalized: Record<string, any> = {};
   
   // Convert all keys to lowercase for safe lookup
-  Object.keys(data).forEach(key => {
-    if (data[key] !== undefined && data[key] !== null) {
-      normalized[key.toLowerCase()] = data[key];
-    }
-  });
+  if (typeof data === 'object') {
+    Object.keys(data).forEach(key => {
+      if (data[key] !== undefined && data[key] !== null) {
+        normalized[key.toLowerCase()] = data[key];
+      }
+    });
+  }
   
   return normalized;
 };
 
-// --- HELPER: Safe Fetch with Increased Timeout ---
+// --- HELPER: Safe Fetch with Increased Timeout & No Cache ---
 const fetchSafe = async (url: string) => {
   try {
     console.log(`Fetching: ${url}`);
     const controller = new AbortController();
-    // Increased timeout to 15 seconds to handle n8n cold starts
-    const timeoutId = setTimeout(() => controller.abort(), 15000); 
+    // Increased timeout to 20 seconds to handle n8n cold starts/delays
+    const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { 
+      signal: controller.signal,
+      cache: 'no-store', // IMPORTANT: Prevent browser from caching empty results
+      headers: { 'Pragma': 'no-cache', 'Cache-Control': 'no-cache' }
+    });
     clearTimeout(timeoutId);
 
     if (response.ok) {
@@ -213,7 +219,8 @@ export const syncWithGoogleSheets = async () => {
 
     const status = String(row.status).toLowerCase();
     const isPaid = status === 'processing' || status === 'completed';
-    const orderId = (rawRow['Order ID'] || row['order id'] || row.id)?.toString();
+    // Use normalized keys to find Order ID safely
+    const orderId = (row['order id'] || row.id || rawRow['Order ID'])?.toString();
     
     if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
@@ -237,9 +244,11 @@ export const syncWithGoogleSheets = async () => {
 
   // --- ADJUSTMENTS PROCESSING ---
   const adjustmentLogs: ActivityLog[] = validAdjustmentsData.map((rawRow: any, index: number) => {
-    const row = normalizeRow(rawRow); // This makes all keys lowercase (product, quantity, type)
+    const row = normalizeRow(rawRow); 
     
-    // Check if essential data exists
+    // Debug: Log the found row to console so user can check
+    // console.log('Adj Row:', row);
+
     if (!row.product && !row.type) return null;
 
     const pName = String(row.product || '').toLowerCase();
@@ -256,7 +265,8 @@ export const syncWithGoogleSheets = async () => {
     else if (pName.includes('all')) pid = 'all'; 
 
     let multiplier = 1;
-    if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
+    // Check for negative types
+    if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].some(t => type.includes(t))) {
       multiplier = -1;
     }
 
@@ -274,7 +284,7 @@ export const syncWithGoogleSheets = async () => {
     return {
       id: `adj-${index}-${Date.now()}`,
       timestamp: rowDate ? rowDate : new Date().toISOString(),
-      type: type as any,
+      type: type.includes('sample') ? 'sample-demo' : (type as any),
       orderNumber: null,
       productUpdates: updates,
       userId: 'manual',
@@ -320,6 +330,10 @@ export const writeAdjustmentToGoogleSheets = async (data: any) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
+    
+    if (!response.ok) {
+        console.error(`Write failed: ${response.status} ${response.statusText}`);
+    }
     return response.ok;
   } catch (error) {
     console.error('Failed to write adjustment:', error);
