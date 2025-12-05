@@ -55,35 +55,48 @@ const defaultProducts: Record<string, Product> = {
 // --- HELPER: Parse Dates Robustly ---
 const safeDate = (dateStr: string | undefined): number => {
   if (!dateStr) return 0;
-  // Handle various date formats
   let timestamp = new Date(dateStr).getTime();
   if (isNaN(timestamp)) {
-    // Handle "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DD"
+    // Handle "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DD" often returned by Sheets
     timestamp = new Date(dateStr.replace(' ', 'T')).getTime();
   }
-  // Fallback for empty/invalid
   return isNaN(timestamp) ? 0 : timestamp;
 };
 
-// --- HELPER: Safe Fetch with Timeout & Logging ---
+// --- HELPER: Normalize Row Keys (The Fix for "Missing" Data) ---
+// This flattens n8n data (removes .json wrapper) and makes keys lowercase for easy lookup
+const normalizeRow = (row: any) => {
+  if (!row) return {};
+  // If n8n wraps data in a 'json' property, unwrap it
+  const data = row.json ? row.json : row;
+  
+  // Create a new object with lowercase keys (e.g. 'Product' -> 'product')
+  const normalized: Record<string, any> = {};
+  Object.keys(data).forEach(key => {
+    normalized[key.toLowerCase()] = data[key];
+  });
+  return normalized;
+};
+
+// --- HELPER: Safe Fetch with Timeout ---
 const fetchSafe = async (url: string) => {
   try {
+    console.log(`Fetching: ${url}`);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
     const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (response.ok) {
       const json = await response.json();
-      console.log(`Data from ${url}:`, json); // Keep logging to help debug
-      // IMPORTANT: Ensure we always return an array
+      // Ensure we always return an array
       return Array.isArray(json) ? json : []; 
     }
     console.warn(`API Error ${url}: ${response.statusText}`);
     return [];
   } catch (error) {
-    console.warn(`Network Error or Timeout connecting to ${url}`, error);
+    console.warn(`Network Error/Timeout: ${url}`, error);
     return [];
   }
 };
@@ -116,36 +129,24 @@ const generateProductionOrders = (): ActivityLog[] => {
   });
   
   // --- HARDCODED HISTORICAL DATA ---
-
-  // 1. Order #1504 (Silver) - Naurawm GS/Riziman
   ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => 
     orders.push(createLogEntry('1504', '2025-11-28T10:00:00Z', 'Naurawm GS/Riziman', pid, -2))
   );
-
-  // 2. Order #1502 (Silver) - Abdullah Ishak
   ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => 
     orders.push(createLogEntry('1502', '2025-11-20T10:00:00Z', 'Abdullah Ishak', pid, -2))
   );
-
-  // 3. Order #1501 - Husaini Bin Abdullah
   orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'colostrum-p', -2));
   orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
-
-  // 4. Order #1370 - Husaini Bin Abdullah
   orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
-
-  // 5. Order #1367 - Husaini Bin Abdullah
   orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -8));
 
-  // 6. Other Historical Orders
+  // Legacy Orders
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, -5)));
   });
-  
   ['1363', '1368'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-01-18T10:00:00Z', 'Historical Customer', pid, -2)));
   });
-  
   ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T10:00:00Z', 'Historical Customer', pid, -1)));
   });
@@ -153,14 +154,13 @@ const generateProductionOrders = (): ActivityLog[] => {
   return orders;
 };
 
-// --- HELPER: Parse Product Strings from WooCommerce ---
+// --- HELPER: Parse Product Strings ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
   const changes: { productId: string; change: number }[] = [];
   const items = productStr.split(',').map(s => s.trim());
 
   items.forEach(item => {
-    // Look for quantity like "Product Name (x2)"
     const qtyMatch = item.match(/\(x(\d+)\)/);
     const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
     const name = item.toLowerCase();
@@ -200,20 +200,23 @@ export const syncWithGoogleSheets = async () => {
   const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : [];
 
   // --- SALES PROCESSING ---
-  const salesLogs: ActivityLog[] = validSalesData.map((row: any, index: number) => {
-    if (!row) return null;
-    const status = row['Status']?.toLowerCase() || '';
+  const salesLogs: ActivityLog[] = validSalesData.map((rawRow: any, index: number) => {
+    const row = normalizeRow(rawRow); // NORMALIZE
+    if (!row.status) return null;
+
+    const status = row.status?.toLowerCase() || '';
     const isPaid = status === 'processing' || status === 'completed';
-    const orderId = row['Order ID']?.toString();
+    // Handle 'Order ID' vs 'order id' (normalizeRow handles basic keys, but 'Order ID' has a space)
+    const orderId = (rawRow['Order ID'] || row['order id'] || row.id)?.toString();
     
     if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
-    const changes = isPaid ? parseProductString(row['Products']) : [];
+    const changes = isPaid ? parseProductString(row.products) : [];
     if (changes.length === 0) return null;
 
     return {
       id: `sale-${orderId || index}`,
-      timestamp: row['Date'] ? row['Date'] : new Date().toISOString(),
+      timestamp: row.date ? row.date : new Date().toISOString(),
       type: 'invoice',
       orderNumber: orderId,
       productUpdates: changes.map(c => ({
@@ -221,21 +224,22 @@ export const syncWithGoogleSheets = async () => {
         before: 0, after: 0, change: c.change
       })),
       userId: 'system',
-      userName: row['Customer'] || 'System',
-      notes: `${row['Status']} - ${row['Products']}`
+      userName: row.customer || 'System',
+      notes: `${row.status} - ${row.products}`
     };
   }).filter((log: any) => log !== null);
 
-  // --- ADJUSTMENTS PROCESSING (FIXED MAPPING) ---
-  const adjustmentLogs: ActivityLog[] = validAdjustmentsData.map((row: any, index: number) => {
-    if (!row) return null;
+  // --- ADJUSTMENTS PROCESSING (FIXED) ---
+  const adjustmentLogs: ActivityLog[] = validAdjustmentsData.map((rawRow: any, index: number) => {
+    const row = normalizeRow(rawRow); // NORMALIZE: Converts 'Product' to 'product', unwraps .json
     
-    // --- FIX: Check both Capitalized (Google) and Lowercase (n8n default) keys ---
-    const pName = (row['Product'] || row['product'] || '').toLowerCase();
-    const qtyRaw = row['Quantity'] || row['quantity'] || '0';
-    const type = row['Type'] || row['type'] || 'manual';
-    const rowDate = row['Date'] || row['date'];
-    const rowReason = row['Reason'] || row['reason'] || 'Manual Adjustment';
+    if (!row.product && !row.type) return null;
+
+    const pName = (row.product || '').toLowerCase();
+    const type = (row.type || 'manual').toLowerCase();
+    const qty = parseInt(row.quantity || '0');
+    const rowDate = row.date;
+    const rowReason = row.reason || 'Manual Adjustment';
 
     let pid = '';
     
@@ -244,10 +248,7 @@ export const syncWithGoogleSheets = async () => {
     else if (pName.includes('barley')) pid = 'barley-best';
     else if (pName.includes('all')) pid = 'all'; 
 
-    const qty = parseInt(qtyRaw.toString());
-    
     let multiplier = 1;
-    // Determine if we should add or subtract based on type
     if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
       multiplier = -1;
     }
@@ -264,25 +265,25 @@ export const syncWithGoogleSheets = async () => {
     if (updates.length === 0) return null;
 
     return {
-      id: `adj-${index}`,
+      id: `adj-${index}-${Date.now()}`, // Unique ID
       timestamp: rowDate ? rowDate : new Date().toISOString(),
       type: type as any,
       orderNumber: null,
       productUpdates: updates,
       userId: 'manual',
-      userName: 'Admin', // This is displayed in the feed
+      userName: 'Admin',
       notes: rowReason
     };
   }).filter((log: any) => log !== null);
 
-  // 5. MERGE & SORT
+  // MERGE & SORT
   const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
   
   const sortedLogs = allLogs.sort((a, b) => 
     safeDate(a.timestamp) - safeDate(b.timestamp)
   );
 
-  // 6. CALCULATE RUNNING TOTAL
+  // CALCULATE RUNNING TOTAL
   const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
   sortedLogs.forEach(log => {
@@ -296,7 +297,7 @@ export const syncWithGoogleSheets = async () => {
     });
   });
 
-  // 7. SAVE
+  // SAVE
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
   
@@ -311,10 +312,6 @@ export const writeAdjustmentToGoogleSheets = async (data: any) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    
-    if (!response.ok) {
-        console.error(`Write failed: ${response.status} ${response.statusText}`);
-    }
     return response.ok;
   } catch (error) {
     console.error('Failed to write adjustment:', error);
