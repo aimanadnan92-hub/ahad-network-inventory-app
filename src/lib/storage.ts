@@ -52,9 +52,22 @@ const defaultProducts: Record<string, Product> = {
   },
 };
 
+// --- HELPER: Parse Dates Robustly ---
+const safeDate = (dateStr: string | undefined): number => {
+  if (!dateStr) return 0;
+  // Try parsing ISO first
+  let timestamp = new Date(dateStr).getTime();
+  
+  // If failed, try handling "YYYY-MM-DD HH:mm:ss" common in Google Sheets
+  if (isNaN(timestamp)) {
+    timestamp = new Date(dateStr.replace(' ', 'T')).getTime();
+  }
+  
+  // If still failed, return 0 to push to bottom
+  return isNaN(timestamp) ? 0 : timestamp;
+};
+
 // --- HELPER: Generate Hardcoded History ---
-// These are your PRE-Google Sheet orders. 
-// IMPORTANT: Ensure these Order IDs do NOT exist in your Google Sheet rows, or they will be skipped.
 const generateProductionOrders = (): ActivityLog[] => {
   const orders: ActivityLog[] = [];
   let activityCounter = 1;
@@ -103,7 +116,7 @@ const generateProductionOrders = (): ActivityLog[] => {
   return orders;
 };
 
-// --- HELPER: Parse Product Strings (Robust Matching) ---
+// --- HELPER: Parse Product Strings ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
   const changes: { productId: string; change: number }[] = [];
@@ -153,13 +166,12 @@ export const syncWithGoogleSheets = async () => {
     // 3. Get Hardcoded History
     const historyLogs = generateProductionOrders();
 
-    // 4. Process Sales Logs (From Sheet1)
+    // 4. Process Sales Logs
     const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
       const status = row['Status']?.toLowerCase() || '';
       const isPaid = status === 'processing' || status === 'completed';
       const orderId = row['Order ID']?.toString();
       
-      // Skip duplicate orders that are already hardcoded
       if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
       const changes = isPaid ? parseProductString(row['Products']) : [];
@@ -179,12 +191,11 @@ export const syncWithGoogleSheets = async () => {
       };
     }).filter((log: any) => log !== null);
 
-    // 5. Process Manual Adjustment Logs (From Adjustments Tab)
+    // 5. Process Adjustment Logs
     const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
       let pid = '';
       const pName = (row['Product'] || '').toLowerCase();
       
-      // Improved matching for Manual Adjustments
       if (pName.includes('colostrum p')) pid = 'colostrum-p';
       else if (pName.includes('colostrum g')) pid = 'colostrum-g';
       else if (pName.includes('barley')) pid = 'barley-best';
@@ -219,43 +230,33 @@ export const syncWithGoogleSheets = async () => {
       };
     });
 
-    // 6. MERGE & SORT (Crucial Step for correct history)
-    // We combine everything into one big timeline
+    // 6. MERGE & SORT
     const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
     
-    // Sort strictly by Date (Oldest first) so calculations flow forward correctly
+    // SORTING FIX: Use safeDate helper
     const sortedLogs = allLogs.sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      safeDate(a.timestamp) - safeDate(b.timestamp)
     );
 
     // 7. CALCULATE RUNNING TOTAL
-    // Start from 1000 and apply changes chronologically
     const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
     sortedLogs.forEach(log => {
       log.productUpdates.forEach(update => {
         if (newProducts[update.productId]) {
-          // Record "Stock Before" for this log
           update.before = newProducts[update.productId].stock;
-          
-          // Apply Change
           newProducts[update.productId].stock += update.change;
-          
-          // Record "Stock After" for this log
           update.after = newProducts[update.productId].stock;
-          
-          // Update "Last Modified" date on product
           newProducts[update.productId].lastUpdated = log.timestamp;
         }
       });
     });
 
-    // 8. SAVE (Reverse logs so Newest is at top for UI)
+    // 8. SAVE
     localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
     
-    console.log('Final Products State:', newProducts);
-    return { products: newProducts, logs: sortedLogs }; // Logs are already reversed above
+    return { products: newProducts, logs: sortedLogs };
 
   } catch (error) {
     console.error('Sync Error:', error);
@@ -280,17 +281,10 @@ export const writeAdjustmentToGoogleSheets = async (data: any) => {
 
 // --- GETTERS & HELPERS ---
 export const getProducts = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || JSON.stringify(defaultProducts));
-
-// Ensure we always return an array, even if cache is empty/corrupt
 export const getActivityLog = () => {
   const stored = localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOG);
-  try {
-    return stored ? JSON.parse(stored) : [];
-  } catch (e) {
-    return [];
-  }
+  try { return stored ? JSON.parse(stored) : []; } catch (e) { return []; }
 };
-
 export const getUsers = () => {
   const users = [
     { id: 'user-001', email: 'admin@ahadnetwork.com', passwordHash: 'AhadNetwork2025!', role: 'admin', name: 'Admin User', createdAt: new Date().toISOString() },
