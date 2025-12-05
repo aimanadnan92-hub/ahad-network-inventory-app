@@ -60,10 +60,11 @@ const safeDate = (dateStr: string | undefined): number => {
   
   // If failed, try handling "YYYY-MM-DD HH:mm:ss" common in Google Sheets
   if (isNaN(timestamp)) {
+    // Simple replace for space to T might help standard ISO conversion
     timestamp = new Date(dateStr.replace(' ', 'T')).getTime();
   }
   
-  // If still failed, return 0 to push to bottom
+  // If still failed, return 0 (pushes to bottom/oldest)
   return isNaN(timestamp) ? 0 : timestamp;
 };
 
@@ -81,6 +82,7 @@ const generateProductionOrders = (): ActivityLog[] => {
     change: number
   ): ActivityLog => ({
     id: `activity-${String(activityCounter++).padStart(3, '0')}`,
+    // Ensuring hardcoded dates are ISO compliant for safeDate
     timestamp: new Date(orderDate).toISOString(),
     type: 'invoice',
     orderNumber,
@@ -95,23 +97,23 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // Gold Orders
+  // Gold Orders (Dates assumed T00:00:00Z for sorting context)
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T00:00:00Z', 'Historical Customer', pid, '', -5)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, '', -5)));
   });
   // Silver Orders
   ['1363', '1368', '1502', '1504'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18T00:00:00Z', 'Historical Customer', pid, '', -2)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18T10:00:00Z', 'Historical Customer', pid, '', -2)));
   });
   // Bronze Orders
   ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T00:00:00Z', 'Historical Customer', pid, '', -1)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T10:00:00Z', 'Historical Customer', pid, '', -1)));
   });
   // Individual Orders
-  orders.push(createLogEntry('1367', '2025-04-27T00:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -8));
-  orders.push(createLogEntry('1370', '2025-05-15T00:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
-  orders.push(createLogEntry('1501', '2025-11-16T00:00:00Z', 'Husaini Bin Abdullah', 'colostrum-p', '', -2));
-  orders.push(createLogEntry('1501', '2025-11-16T00:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+  orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -8));
+  orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'colostrum-p', '', -2));
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
 
   return orders;
 };
@@ -166,19 +168,20 @@ export const syncWithGoogleSheets = async () => {
     // 3. Get Hardcoded History
     const historyLogs = generateProductionOrders();
 
-    // 4. Process Sales Logs
+    // 4. Process Sales Logs (From Sheet1)
     const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
       const status = row['Status']?.toLowerCase() || '';
       const isPaid = status === 'processing' || status === 'completed';
       const orderId = row['Order ID']?.toString();
       
+      // Skip if duplicate of hardcoded history
       if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
       const changes = isPaid ? parseProductString(row['Products']) : [];
 
       return {
         id: `sale-${orderId || index}`,
-        timestamp: row['Date'] || new Date().toISOString(),
+        timestamp: row['Date'] ? row['Date'] : new Date().toISOString(), // Use row date if available
         type: 'invoice',
         orderNumber: orderId,
         productUpdates: changes.map(c => ({
@@ -191,11 +194,12 @@ export const syncWithGoogleSheets = async () => {
       };
     }).filter((log: any) => log !== null);
 
-    // 5. Process Adjustment Logs
+    // 5. Process Adjustment Logs (From Adjustments Tab)
     const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
       let pid = '';
       const pName = (row['Product'] || '').toLowerCase();
       
+      // Improved matching logic
       if (pName.includes('colostrum p')) pid = 'colostrum-p';
       else if (pName.includes('colostrum g')) pid = 'colostrum-g';
       else if (pName.includes('barley')) pid = 'barley-best';
@@ -220,7 +224,8 @@ export const syncWithGoogleSheets = async () => {
 
       return {
         id: `adj-${index}`,
-        timestamp: row['Date'] ? new Date(row['Date']).toISOString() : new Date().toISOString(),
+        // Use safeDate later, pass raw string here or ISO if valid
+        timestamp: row['Date'] ? row['Date'] : new Date().toISOString(),
         type: type as any,
         orderNumber: null,
         productUpdates: updates,
@@ -233,7 +238,7 @@ export const syncWithGoogleSheets = async () => {
     // 6. MERGE & SORT
     const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
     
-    // SORTING FIX: Use safeDate helper
+    // SORTING FIX: Use safeDate helper to ensure robust comparison
     const sortedLogs = allLogs.sort((a, b) => 
       safeDate(a.timestamp) - safeDate(b.timestamp)
     );
@@ -252,10 +257,12 @@ export const syncWithGoogleSheets = async () => {
       });
     });
 
-    // 8. SAVE
+    // 8. SAVE (Reverse logs so Newest is at top for UI Display)
     localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
     
+    // Return non-reversed logs? Actually UI expects reverse (newest first)
+    // But sortedLogs was mutated by reverse(). So we return that.
     return { products: newProducts, logs: sortedLogs };
 
   } catch (error) {
