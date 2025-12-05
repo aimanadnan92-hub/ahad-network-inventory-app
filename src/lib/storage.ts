@@ -55,17 +55,27 @@ const defaultProducts: Record<string, Product> = {
 // --- HELPER: Parse Dates Robustly ---
 const safeDate = (dateStr: string | undefined): number => {
   if (!dateStr) return 0;
-  // Try parsing ISO first
   let timestamp = new Date(dateStr).getTime();
-  
-  // If failed, try handling "YYYY-MM-DD HH:mm:ss" common in Google Sheets
   if (isNaN(timestamp)) {
-    // Simple replace for space to T might help standard ISO conversion
+    // Handle "YYYY-MM-DD HH:mm:ss" common in Google Sheets
     timestamp = new Date(dateStr.replace(' ', 'T')).getTime();
   }
-  
-  // If still failed, return 0 (pushes to bottom/oldest)
   return isNaN(timestamp) ? 0 : timestamp;
+};
+
+// --- HELPER: Safe Fetch to prevent app crash if API is down ---
+const fetchSafe = async (url: string) => {
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.warn(`API Error ${url}: ${response.statusText}`);
+    return [];
+  } catch (error) {
+    console.warn(`Network Error connecting to ${url}`, error);
+    return []; // Return empty array so hardcoded data still processes
+  }
 };
 
 // --- HELPER: Generate Hardcoded History ---
@@ -78,11 +88,9 @@ const generateProductionOrders = (): ActivityLog[] => {
     orderDate: string,
     customer: string,
     productId: string,
-    productName: string,
     change: number
   ): ActivityLog => ({
-    id: `activity-${String(activityCounter++).padStart(3, '0')}`,
-    // Ensuring hardcoded dates are ISO compliant for safeDate
+    id: `activity-hist-${String(activityCounter++).padStart(3, '0')}`,
     timestamp: new Date(orderDate).toISOString(),
     type: 'invoice',
     orderNumber,
@@ -97,28 +105,31 @@ const generateProductionOrders = (): ActivityLog[] => {
     notes: `${customer} - Order #${orderNumber}`
   });
   
-  // Gold Orders (Dates assumed T00:00:00Z for sorting context)
+  // Hardcoded Gold Orders (-5 each)
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, '', -5)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, -5)));
   });
-  // Silver Orders
+  
+  // Hardcoded Silver Orders (-2 each)
   ['1363', '1368', '1502', '1504'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18T10:00:00Z', 'Historical Customer', pid, '', -2)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-03-18T10:00:00Z', 'Historical Customer', pid, -2)));
   });
-  // Bronze Orders
+  
+  // Hardcoded Bronze Orders (-1 each)
   ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
-    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T10:00:00Z', 'Historical Customer', pid, '', -1)));
+    ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T10:00:00Z', 'Historical Customer', pid, -1)));
   });
-  // Individual Orders
-  orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -8));
-  orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'colostrum-p', '', -2));
-  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'barley-best', '', -4));
+  
+  // Hardcoded Individual Orders
+  orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -8));
+  orders.push(createLogEntry('1370', '2025-05-15T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'colostrum-p', -2));
+  orders.push(createLogEntry('1501', '2025-11-16T17:26:00Z', 'Husaini Bin Abdullah', 'barley-best', -4));
 
   return orders;
 };
 
-// --- HELPER: Parse Product Strings ---
+// --- HELPER: Parse Product Strings from WooCommerce ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
   const changes: { productId: string; change: number }[] = [];
@@ -156,119 +167,111 @@ const parseProductString = (productStr: string) => {
 export const syncWithGoogleSheets = async () => {
   console.log('Syncing data...');
   
-  try {
-    // 1. Fetch Sales Data
-    const salesResponse = await fetch(N8N_SALES_URL);
-    const salesData = salesResponse.ok ? await salesResponse.json() : [];
+  // 1. Get Hardcoded History (Always available)
+  const historyLogs = generateProductionOrders();
 
-    // 2. Fetch Adjustments Data
-    const adjustmentsResponse = await fetch(N8N_ADJUSTMENTS_READ_URL);
-    const adjustmentsData = adjustmentsResponse.ok ? await adjustmentsResponse.json() : [];
+  // 2. Fetch Remote Data (Safely)
+  // We use fetchSafe so if API fails, we still get an empty array and code proceeds
+  const salesData = await fetchSafe(N8N_SALES_URL);
+  const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
-    // 3. Get Hardcoded History
-    const historyLogs = generateProductionOrders();
-
-    // 4. Process Sales Logs (From Sheet1)
-    const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
-      const status = row['Status']?.toLowerCase() || '';
-      const isPaid = status === 'processing' || status === 'completed';
-      const orderId = row['Order ID']?.toString();
-      
-      // Skip if duplicate of hardcoded history
-      if (historyLogs.some(log => log.orderNumber === orderId)) return null;
-
-      const changes = isPaid ? parseProductString(row['Products']) : [];
-
-      return {
-        id: `sale-${orderId || index}`,
-        timestamp: row['Date'] ? row['Date'] : new Date().toISOString(), // Use row date if available
-        type: 'invoice',
-        orderNumber: orderId,
-        productUpdates: changes.map(c => ({
-          productId: c.productId,
-          before: 0, after: 0, change: c.change
-        })),
-        userId: 'system',
-        userName: row['Customer'] || 'System',
-        notes: `${row['Status']} - ${row['Products']}`
-      };
-    }).filter((log: any) => log !== null);
-
-    // 5. Process Adjustment Logs (From Adjustments Tab)
-    const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
-      let pid = '';
-      const pName = (row['Product'] || '').toLowerCase();
-      
-      // Improved matching logic
-      if (pName.includes('colostrum p')) pid = 'colostrum-p';
-      else if (pName.includes('colostrum g')) pid = 'colostrum-g';
-      else if (pName.includes('barley')) pid = 'barley-best';
-      else if (pName.includes('all')) pid = 'all'; 
-
-      const qty = parseInt(row['Quantity'] || '0');
-      const type = row['Type'] || 'manual';
-      
-      let multiplier = 1;
-      if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
-        multiplier = -1;
-      }
-
-      const updates = [];
-      if (pid === 'all') {
-        ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(id => {
-          updates.push({ productId: id, before: 0, after: 0, change: qty * multiplier });
-        });
-      } else if (pid) {
-        updates.push({ productId: pid, before: 0, after: 0, change: qty * multiplier });
-      }
-
-      return {
-        id: `adj-${index}`,
-        // Use safeDate later, pass raw string here or ISO if valid
-        timestamp: row['Date'] ? row['Date'] : new Date().toISOString(),
-        type: type as any,
-        orderNumber: null,
-        productUpdates: updates,
-        userId: 'manual',
-        userName: 'Admin',
-        notes: row['Reason'] || 'Manual Adjustment'
-      };
-    });
-
-    // 6. MERGE & SORT
-    const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
+  // 3. Process Sales Logs (From Sheet1)
+  const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
+    const status = row['Status']?.toLowerCase() || '';
+    const isPaid = status === 'processing' || status === 'completed';
+    const orderId = row['Order ID']?.toString();
     
-    // SORTING FIX: Use safeDate helper to ensure robust comparison
-    const sortedLogs = allLogs.sort((a, b) => 
-      safeDate(a.timestamp) - safeDate(b.timestamp)
-    );
+    // Skip if duplicate of hardcoded history
+    if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
-    // 7. CALCULATE RUNNING TOTAL
-    const newProducts = JSON.parse(JSON.stringify(defaultProducts));
+    const changes = isPaid ? parseProductString(row['Products']) : [];
+    if (changes.length === 0) return null;
 
-    sortedLogs.forEach(log => {
-      log.productUpdates.forEach(update => {
-        if (newProducts[update.productId]) {
-          update.before = newProducts[update.productId].stock;
-          newProducts[update.productId].stock += update.change;
-          update.after = newProducts[update.productId].stock;
-          newProducts[update.productId].lastUpdated = log.timestamp;
-        }
+    return {
+      id: `sale-${orderId || index}`,
+      timestamp: row['Date'] ? row['Date'] : new Date().toISOString(),
+      type: 'invoice',
+      orderNumber: orderId,
+      productUpdates: changes.map(c => ({
+        productId: c.productId,
+        before: 0, after: 0, change: c.change
+      })),
+      userId: 'system',
+      userName: row['Customer'] || 'System',
+      notes: `${row['Status']} - ${row['Products']}`
+    };
+  }).filter((log: any) => log !== null);
+
+  // 4. Process Adjustment Logs (From Adjustments Tab)
+  const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
+    let pid = '';
+    const pName = (row['Product'] || '').toLowerCase();
+    
+    if (pName.includes('colostrum p')) pid = 'colostrum-p';
+    else if (pName.includes('colostrum g')) pid = 'colostrum-g';
+    else if (pName.includes('barley')) pid = 'barley-best';
+    else if (pName.includes('all')) pid = 'all'; 
+
+    const qty = parseInt(row['Quantity'] || '0');
+    const type = row['Type'] || 'manual';
+    
+    let multiplier = 1;
+    if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
+      multiplier = -1;
+    }
+
+    const updates = [];
+    if (pid === 'all') {
+      ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(id => {
+        updates.push({ productId: id, before: 0, after: 0, change: qty * multiplier });
       });
+    } else if (pid) {
+      updates.push({ productId: pid, before: 0, after: 0, change: qty * multiplier });
+    }
+
+    if (updates.length === 0) return null;
+
+    return {
+      id: `adj-${index}`,
+      timestamp: row['Date'] ? row['Date'] : new Date().toISOString(),
+      type: type as any,
+      orderNumber: null,
+      productUpdates: updates,
+      userId: 'manual',
+      userName: 'Admin',
+      notes: row['Reason'] || 'Manual Adjustment'
+    };
+  }).filter((log: any) => log !== null);
+
+  // 5. MERGE & SORT
+  // Order: Hardcoded + Sales + Adjustments
+  const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
+  
+  const sortedLogs = allLogs.sort((a, b) => 
+    safeDate(a.timestamp) - safeDate(b.timestamp)
+  );
+
+  // 6. CALCULATE RUNNING TOTAL
+  // Reset to default (1000) before calculating
+  const newProducts = JSON.parse(JSON.stringify(defaultProducts));
+
+  sortedLogs.forEach(log => {
+    log.productUpdates.forEach(update => {
+      if (newProducts[update.productId]) {
+        update.before = newProducts[update.productId].stock;
+        newProducts[update.productId].stock += update.change;
+        update.after = newProducts[update.productId].stock;
+        newProducts[update.productId].lastUpdated = log.timestamp;
+      }
     });
+  });
 
-    // 8. SAVE (Reverse logs so Newest is at top for UI Display)
-    localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
-    
-    // Return non-reversed logs? Actually UI expects reverse (newest first)
-    // But sortedLogs was mutated by reverse(). So we return that.
-    return { products: newProducts, logs: sortedLogs };
-
-  } catch (error) {
-    console.error('Sync Error:', error);
-    return null;
-  }
+  // 7. SAVE
+  // Reverse logs so Newest is at top for UI Display
+  localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
+  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
+  
+  return { products: newProducts, logs: sortedLogs };
 };
 
 // --- WRITE ACTION (Send to n8n) ---
