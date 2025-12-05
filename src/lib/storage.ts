@@ -55,17 +55,20 @@ const defaultProducts: Record<string, Product> = {
 // --- HELPER: Parse Dates Robustly ---
 const safeDate = (dateStr: string | undefined): number => {
   if (!dateStr) return 0;
+  // Handle various date formats
   let timestamp = new Date(dateStr).getTime();
   if (isNaN(timestamp)) {
-    // Handle "YYYY-MM-DD HH:mm:ss" common in Google Sheets
+    // Handle "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DD"
     timestamp = new Date(dateStr.replace(' ', 'T')).getTime();
   }
+  // Fallback for empty/invalid
   return isNaN(timestamp) ? 0 : timestamp;
 };
 
-// --- HELPER: Safe Fetch with Timeout (Fixes Sync Stuck) ---
+// --- HELPER: Safe Fetch with Timeout & Logging ---
 const fetchSafe = async (url: string) => {
   try {
+    console.log(`Fetching from: ${url}`);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
 
@@ -73,13 +76,16 @@ const fetchSafe = async (url: string) => {
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      return await response.json();
+      const json = await response.json();
+      console.log(`Data from ${url}:`, json);
+      // IMPORTANT: Ensure we always return an array
+      return Array.isArray(json) ? json : []; 
     }
     console.warn(`API Error ${url}: ${response.statusText}`);
     return [];
   } catch (error) {
     console.warn(`Network Error or Timeout connecting to ${url}`, error);
-    return []; // Return empty array so hardcoded data still processes
+    return [];
   }
 };
 
@@ -132,18 +138,15 @@ const generateProductionOrders = (): ActivityLog[] => {
   // 5. Order #1367 - Husaini Bin Abdullah
   orders.push(createLogEntry('1367', '2025-04-27T10:00:00Z', 'Husaini Bin Abdullah', 'barley-best', -8));
 
-  // 6. Other Historical Orders (Generic "Historical Customer")
-  // Gold Orders (-5 each)
+  // 6. Other Historical Orders
   ['1437', '150', '151', '152', '154', '155', '157', '158', '159', '160', '161', '1018', '1275'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2024-10-24T10:00:00Z', 'Historical Customer', pid, -5)));
   });
   
-  // Silver Orders (-2 each)
   ['1363', '1368'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-01-18T10:00:00Z', 'Historical Customer', pid, -2)));
   });
   
-  // Bronze Orders (-1 each)
   ['1227', '1310', '1351', '1352', '1373', '1471', '1472', '1473', '1474', '1475', '1476'].forEach(order => {
     ['colostrum-p', 'colostrum-g', 'barley-best'].forEach(pid => orders.push(createLogEntry(order, '2025-02-07T10:00:00Z', 'Historical Customer', pid, -1)));
   });
@@ -151,14 +154,13 @@ const generateProductionOrders = (): ActivityLog[] => {
   return orders;
 };
 
-// --- HELPER: Parse Product Strings from WooCommerce ---
+// --- HELPER: Parse Product Strings ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
   const changes: { productId: string; change: number }[] = [];
   const items = productStr.split(',').map(s => s.trim());
 
   items.forEach(item => {
-    // Look for quantity like "Product Name (x2)"
     const qtyMatch = item.match(/\(x(\d+)\)/);
     const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
     const name = item.toLowerCase();
@@ -190,21 +192,20 @@ const parseProductString = (productStr: string) => {
 export const syncWithGoogleSheets = async () => {
   console.log('Syncing data...');
   
-  // 1. Get Hardcoded History (Always available)
   const historyLogs = generateProductionOrders();
-
-  // 2. Fetch Remote Data (Safely with Timeout)
-  // We use fetchSafe so if API fails or times out, we continue with empty arrays
   const salesData = await fetchSafe(N8N_SALES_URL);
   const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
-  // 3. Process Sales Logs (From Sheet1 - Currently Empty)
-  const salesLogs: ActivityLog[] = salesData.map((row: any, index: number) => {
+  // Ensure data is array before mapping to prevent crash
+  const validSalesData = Array.isArray(salesData) ? salesData : [];
+  const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : [];
+
+  const salesLogs: ActivityLog[] = validSalesData.map((row: any, index: number) => {
+    if (!row) return null;
     const status = row['Status']?.toLowerCase() || '';
     const isPaid = status === 'processing' || status === 'completed';
     const orderId = row['Order ID']?.toString();
     
-    // Skip if duplicate of hardcoded history
     if (historyLogs.some(log => log.orderNumber === orderId)) return null;
 
     const changes = isPaid ? parseProductString(row['Products']) : [];
@@ -225,8 +226,8 @@ export const syncWithGoogleSheets = async () => {
     };
   }).filter((log: any) => log !== null);
 
-  // 4. Process Adjustment Logs (From Adjustments Tab - Currently Empty)
-  const adjustmentLogs: ActivityLog[] = adjustmentsData.map((row: any, index: number) => {
+  const adjustmentLogs: ActivityLog[] = validAdjustmentsData.map((row: any, index: number) => {
+    if (!row) return null;
     let pid = '';
     const pName = (row['Product'] || '').toLowerCase();
     
@@ -266,15 +267,14 @@ export const syncWithGoogleSheets = async () => {
     };
   }).filter((log: any) => log !== null);
 
-  // 5. MERGE & SORT
+  // MERGE & SORT
   const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
   
-  // Sort by date (Oldest first for calculation)
   const sortedLogs = allLogs.sort((a, b) => 
     safeDate(a.timestamp) - safeDate(b.timestamp)
   );
 
-  // 6. CALCULATE RUNNING TOTAL
+  // CALCULATE RUNNING TOTAL
   const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
   sortedLogs.forEach(log => {
@@ -288,8 +288,6 @@ export const syncWithGoogleSheets = async () => {
     });
   });
 
-  // 7. SAVE
-  // Reverse logs so Newest is at top for UI
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
   
@@ -304,6 +302,11 @@ export const writeAdjustmentToGoogleSheets = async (data: any) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
+    
+    // Log response for debugging
+    if (!response.ok) {
+        console.error(`Write failed: ${response.status} ${response.statusText}`);
+    }
     return response.ok;
   } catch (error) {
     console.error('Failed to write adjustment:', error);
