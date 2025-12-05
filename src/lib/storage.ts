@@ -68,7 +68,6 @@ const safeDate = (dateStr: string | undefined): number => {
 // --- HELPER: Safe Fetch with Timeout & Logging ---
 const fetchSafe = async (url: string) => {
   try {
-    console.log(`Fetching from: ${url}`);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
 
@@ -77,7 +76,7 @@ const fetchSafe = async (url: string) => {
 
     if (response.ok) {
       const json = await response.json();
-      console.log(`Data from ${url}:`, json);
+      console.log(`Data from ${url}:`, json); // Keep logging to help debug
       // IMPORTANT: Ensure we always return an array
       return Array.isArray(json) ? json : []; 
     }
@@ -154,13 +153,14 @@ const generateProductionOrders = (): ActivityLog[] => {
   return orders;
 };
 
-// --- HELPER: Parse Product Strings ---
+// --- HELPER: Parse Product Strings from WooCommerce ---
 const parseProductString = (productStr: string) => {
   if (!productStr) return [];
   const changes: { productId: string; change: number }[] = [];
   const items = productStr.split(',').map(s => s.trim());
 
   items.forEach(item => {
+    // Look for quantity like "Product Name (x2)"
     const qtyMatch = item.match(/\(x(\d+)\)/);
     const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
     const name = item.toLowerCase();
@@ -196,10 +196,10 @@ export const syncWithGoogleSheets = async () => {
   const salesData = await fetchSafe(N8N_SALES_URL);
   const adjustmentsData = await fetchSafe(N8N_ADJUSTMENTS_READ_URL);
 
-  // Ensure data is array before mapping to prevent crash
   const validSalesData = Array.isArray(salesData) ? salesData : [];
   const validAdjustmentsData = Array.isArray(adjustmentsData) ? adjustmentsData : [];
 
+  // --- SALES PROCESSING ---
   const salesLogs: ActivityLog[] = validSalesData.map((row: any, index: number) => {
     if (!row) return null;
     const status = row['Status']?.toLowerCase() || '';
@@ -226,20 +226,28 @@ export const syncWithGoogleSheets = async () => {
     };
   }).filter((log: any) => log !== null);
 
+  // --- ADJUSTMENTS PROCESSING (FIXED MAPPING) ---
   const adjustmentLogs: ActivityLog[] = validAdjustmentsData.map((row: any, index: number) => {
     if (!row) return null;
+    
+    // --- FIX: Check both Capitalized (Google) and Lowercase (n8n default) keys ---
+    const pName = (row['Product'] || row['product'] || '').toLowerCase();
+    const qtyRaw = row['Quantity'] || row['quantity'] || '0';
+    const type = row['Type'] || row['type'] || 'manual';
+    const rowDate = row['Date'] || row['date'];
+    const rowReason = row['Reason'] || row['reason'] || 'Manual Adjustment';
+
     let pid = '';
-    const pName = (row['Product'] || '').toLowerCase();
     
     if (pName.includes('colostrum p')) pid = 'colostrum-p';
     else if (pName.includes('colostrum g')) pid = 'colostrum-g';
     else if (pName.includes('barley')) pid = 'barley-best';
     else if (pName.includes('all')) pid = 'all'; 
 
-    const qty = parseInt(row['Quantity'] || '0');
-    const type = row['Type'] || 'manual';
+    const qty = parseInt(qtyRaw.toString());
     
     let multiplier = 1;
+    // Determine if we should add or subtract based on type
     if (['remove', 'temporary-out', 'damaged', 'missing', 'expired', 'sample-demo'].includes(type)) {
       multiplier = -1;
     }
@@ -257,24 +265,24 @@ export const syncWithGoogleSheets = async () => {
 
     return {
       id: `adj-${index}`,
-      timestamp: row['Date'] ? row['Date'] : new Date().toISOString(),
+      timestamp: rowDate ? rowDate : new Date().toISOString(),
       type: type as any,
       orderNumber: null,
       productUpdates: updates,
       userId: 'manual',
-      userName: 'Admin',
-      notes: row['Reason'] || 'Manual Adjustment'
+      userName: 'Admin', // This is displayed in the feed
+      notes: rowReason
     };
   }).filter((log: any) => log !== null);
 
-  // MERGE & SORT
+  // 5. MERGE & SORT
   const allLogs = [...historyLogs, ...salesLogs, ...adjustmentLogs];
   
   const sortedLogs = allLogs.sort((a, b) => 
     safeDate(a.timestamp) - safeDate(b.timestamp)
   );
 
-  // CALCULATE RUNNING TOTAL
+  // 6. CALCULATE RUNNING TOTAL
   const newProducts = JSON.parse(JSON.stringify(defaultProducts));
 
   sortedLogs.forEach(log => {
@@ -288,6 +296,7 @@ export const syncWithGoogleSheets = async () => {
     });
   });
 
+  // 7. SAVE
   localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOG, JSON.stringify(sortedLogs.reverse())); 
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(newProducts));
   
@@ -303,7 +312,6 @@ export const writeAdjustmentToGoogleSheets = async (data: any) => {
       body: JSON.stringify(data)
     });
     
-    // Log response for debugging
     if (!response.ok) {
         console.error(`Write failed: ${response.status} ${response.statusText}`);
     }
